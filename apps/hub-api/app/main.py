@@ -25,9 +25,9 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="SpoqAssist Hub API",
+    title="SpoqSense Hub API",
     version="0.2.0",
-    description="Local Mac Studio hub for SpoqAssist (Epics 1–4).",
+    description="Local Mac Studio hub for SpoqSense (Epics 1–4).",
     lifespan=lifespan,
 )
 
@@ -56,4 +56,4 @@ app.include_router(admin_ops_router)
 
 @app.get("/")
 async def root() -> dict:
-    return {"service": "spoqassist-hub-api", "docs": "/docs"}
+    return {"service": "spoqsense-hub-api", "docs": "/docs"}

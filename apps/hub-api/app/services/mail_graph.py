@@ -16,7 +16,7 @@ from app.domain.enums import MailboxKind
 logger = logging.getLogger(__name__)
 
 AI_DISCLOSURE_FOOTER = (
-    "\n\n—\nThis message was prepared with assistance from SpoqAssist (company AI)."
+    "\n\n—\nThis message was prepared with assistance from SpoqSense (company AI)."
 )
 
 

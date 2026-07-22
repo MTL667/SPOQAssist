@@ -102,7 +102,7 @@ export function ConfirmOutboundDialog({
         <Text block>Excerpt: {draftExcerpt.slice(0, 180) || "(empty)"}</Text>
         {aiAssisted ? (
           <Text className={styles.disclosure} block>
-            AI disclosure: this outbound message was prepared with SpoqAssist assistance and will
+            AI disclosure: this outbound message was prepared with SpoqSense assistance and will
             include a disclosure footer.
           </Text>
         ) : null}

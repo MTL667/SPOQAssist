@@ -144,7 +144,7 @@ export function App(): React.JSX.Element {
     } catch {
       setState("unavailable");
       setUnavailableMessage(
-        "The SpoqAssist hub cannot be reached on the LAN (Mac Studio :8000 via webpack proxy). Check the Studio is awake and Retry."
+        "The SpoqSense hub cannot be reached on the LAN (Mac Studio :8000 via webpack proxy). Check the Studio is awake and Retry."
       );
       clearSuggestion();
     } finally {
@@ -402,7 +402,7 @@ export function App(): React.JSX.Element {
   if (state === "checking") {
     return (
       <main className={styles.center} aria-busy="true">
-        <Spinner label="Checking SpoqAssist hub…" />
+        <Spinner label="Checking SpoqSense hub…" />
       </main>
     );
   }
@@ -422,7 +422,7 @@ export function App(): React.JSX.Element {
 
   return (
     <main className={styles.root}>
-      <Title3>SpoqAssist</Title3>
+      <Title3>SpoqSense</Title3>
 
       <Text
         className={

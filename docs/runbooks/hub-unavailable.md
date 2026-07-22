@@ -2,7 +2,7 @@
 
 ## Symptoms
 
-- Outlook pane shows **SpoqAssist unavailable** + **Retry**
+- Outlook pane shows **SpoqSense unavailable** + **Retry**
 - Monitoring: `GET /health` fails or times out over Tailscale/TLS
 
 ## Checks (no mailbox content)

@@ -36,10 +36,10 @@ export function HubUnavailable({
   const styles = useStyles();
   return (
     <main className={styles.root} aria-live="polite">
-      <Title3>SpoqAssist unavailable</Title3>
+      <Title3>SpoqSense unavailable</Title3>
       <Text className={styles.message} block>
         {message ||
-          "The SpoqAssist hub cannot be reached. Check Tailscale/VPN and try again."}
+          "The SpoqSense hub cannot be reached. Check Tailscale/VPN and try again."}
       </Text>
       <Text className={styles.message} block>
         IT: verify hub health at GET /health (no mailbox content).

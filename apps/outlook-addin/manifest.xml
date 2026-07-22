@@ -8,7 +8,7 @@
   <Version>0.1.0.0</Version>
   <ProviderName>SPOQ</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="SpoqAssist"/>
+  <DisplayName DefaultValue="SpoqSense"/>
   <Description DefaultValue="Company AI email assistant (scaffold)"/>
   <IconUrl DefaultValue="https://localhost:3000/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-64.png"/>
@@ -82,11 +82,11 @@
           <bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3000/taskpane.html"/>
         </bt:Urls>
         <bt:ShortStrings>
-          <bt:String id="GroupLabel" DefaultValue="SpoqAssist"/>
-          <bt:String id="TaskpaneButton.Label" DefaultValue="SpoqAssist"/>
+          <bt:String id="GroupLabel" DefaultValue="SpoqSense"/>
+          <bt:String id="TaskpaneButton.Label" DefaultValue="SpoqSense"/>
         </bt:ShortStrings>
         <bt:LongStrings>
-          <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open SpoqAssist"/>
+          <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open SpoqSense"/>
         </bt:LongStrings>
       </Resources>
       <!-- SpoqSense Entra app. ENTRA_API_AUDIENCE on the hub must match Resource. -->

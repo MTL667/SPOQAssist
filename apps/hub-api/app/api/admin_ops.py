@@ -25,7 +25,7 @@ async def health_detail() -> dict:
         hub_status = "degraded"
     return {
         "status": hub_status,
-        "service": "spoqassist-hub-api",
+        "service": "spoqsense-hub-api",
         "env": settings.spoq_env,
         "graph_mode": settings.graph_mode,
         "inference": inference,

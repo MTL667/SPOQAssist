@@ -17,8 +17,8 @@ npm run dev-server
 
 1. In Outlook for Mac: **Get Add-ins → My Add-ins → Add from file** (or org sideload path).
 2. Select `apps/outlook-addin/manifest.xml` (or `dist/manifest.xml` after build).
-3. Open a message → **SpoqAssist** task pane.
-4. If the hub is down, the pane shows **SpoqAssist unavailable** with **Retry** (no Accept/suggestions).
+3. Open a message → **SpoqSense** task pane.
+4. If the hub is down, the pane shows **SpoqSense unavailable** with **Retry** (no Accept/suggestions).
 
 ## Notes
 

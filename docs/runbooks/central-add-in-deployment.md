@@ -2,7 +2,7 @@
 
 ## Goal
 
-Deploy SpoqAssist to pilot users/groups via Microsoft 365 integrated apps **per Entra entity**, so users are not limited to sideload (FR27, NFR-I2).
+Deploy SpoqSense to pilot users/groups via Microsoft 365 integrated apps **per Entra entity**, so users are not limited to sideload (FR27, NFR-I2).
 
 ## Prerequisites
 
@@ -17,9 +17,9 @@ Repeat for **each** Entra entity:
 1. Sign in to [Microsoft 365 admin center](https://admin.microsoft.com) for that tenant.
 2. Go to **Settings → Integrated apps** (or **Exchange → Add-ins** depending on admin UX).
 3. Choose **Upload custom apps** / deploy add-in from file.
-4. Upload the SpoqAssist `manifest.xml` (production host URLs, not `localhost`).
+4. Upload the SpoqSense `manifest.xml` (production host URLs, not `localhost`).
 5. Assign to **users or groups** in the pilot (not org-wide until ready).
-6. Confirm Outlook for Mac shows **SpoqAssist** on the message read surface for assigned users.
+6. Confirm Outlook for Mac shows **SpoqSense** on the message read surface for assigned users.
 7. Record the assignment in ops notes (`PUT /v1/ops/connector_config`) — non-content only.
 
 ## Manifest checklist before upload

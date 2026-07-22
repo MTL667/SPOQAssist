@@ -8,5 +8,5 @@ async def health() -> dict:
     """Non-content health probe — no auth, no mailbox payloads (FR35 / Story 1.1)."""
     return {
         "status": "ok",
-        "service": "spoqassist-hub-api",
+        "service": "spoqsense-hub-api",
     }

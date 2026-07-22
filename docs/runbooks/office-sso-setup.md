@@ -2,7 +2,7 @@
 
 ## Goal
 
-Outlook for Mac obtains an Entra access token via Office SSO and calls the SpoqAssist hub with `Authorization: Bearer`. Sideload can still use an in-pane paste (or `localStorage.spoq_access_token`) as fallback.
+Outlook for Mac obtains an Entra access token via Office SSO and calls the SpoqSense hub with `Authorization: Bearer`. Sideload can still use an in-pane paste (or `localStorage.spoq_access_token`) as fallback.
 
 ## Per Entra entity
 
@@ -40,7 +40,7 @@ Outlook for Mac obtains an Entra access token via Office SSO and calls the SpoqA
 
 ## Fallback (sideload without SSO)
 
-In the SpoqAssist pane: paste a JWT whose `aud` matches `ENTRA_API_AUDIENCE`, then Save.
+In the SpoqSense pane: paste a JWT whose `aud` matches `ENTRA_API_AUDIENCE`, then Save.
 
 Or via DevTools console:
 
