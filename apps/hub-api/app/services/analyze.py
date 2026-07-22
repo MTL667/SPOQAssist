@@ -105,7 +105,11 @@ def run_analyze(
     )
 
     warnings = _attachment_warnings(loaded.attachment_names, loaded.attachment_sizes)
-    query = f"{loaded.subject}\n{loaded.body}\n{loaded.sender}"
+    from app.services.thread_split import split_thread_body
+
+    parts = split_thread_body(loaded.body)
+    # Retrieve against the latest ask — avoid pulling style matches from quoted history.
+    query = f"{loaded.subject}\n{parts.latest_message}\n{loaded.sender}"
     snippets = retrieve_similar(
         db, mailbox_profile_id=mailbox_profile_id, query_text=query, client=client
     )

@@ -13,6 +13,7 @@ import httpx
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.domain.enums import Confidence, HistoryStatus
+from app.services.thread_split import split_thread_body
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,9 @@ class StubInferenceClient:
         behavior_summary: str | None = None,
     ) -> AnalyzeSignals:
         del mailbox_email
-        text = f"{subject} {body} {sender}".lower()
+        parts = split_thread_body(body)
+        # Classify on the latest segment so quoted history does not dominate.
+        text = f"{subject} {parts.latest_message} {sender}".lower()
         if "urgent" in text or "asap" in text:
             priority, confidence = "high", Confidence.HIGH
         elif "fyi" in text or "newsletter" in text:
@@ -181,10 +184,20 @@ class StubInferenceClient:
                 draft = None
             else:
                 greet = _display_name_from_email(sender) or "there"
+                latest = parts.latest_message.strip() or subject
+                # Answer the latest ask — never paste lines from quoted thread history.
                 draft = (
-                    f"Hi {greet},\n\nThanks for your message regarding “{subject[:80]}”. "
+                    f"Hi {greet},\n\n"
+                    f"Thanks for your note — regarding “{latest[:120].replace(chr(10), ' ')}”, "
                     "I will follow up shortly.\n\nBest regards"
                 )
+                if parts.split:
+                    why.append(
+                        {
+                            "code": "thread_latest",
+                            "text": "Draft targets the latest message; quoted thread used as context only.",
+                        }
+                    )
                 if behavior_summary and behavior_summary.strip():
                     # Testable marker that draft path consumed the cached profile prompt.
                     draft += "\n\n[mailbox-profile-applied]"
@@ -347,6 +360,9 @@ class OllamaInferenceClient:
         owner_name = _display_name_from_email(mailbox_email) or owner
         counterpart = sender or "the other person"
         counterpart_name = _display_name_from_email(sender) or counterpart
+        parts = split_thread_body(body)
+        latest = parts.latest_message[:1500]
+        thread_ctx = parts.thread_context[:2000] if parts.thread_context else "(none)"
         style = " --- ".join(s[:250] for s in snippets[:3]) or "(none)"
         profile_block = (behavior_summary or "").strip() or "(none cached)"
         if category == "meeting":
@@ -365,28 +381,35 @@ class OllamaInferenceClient:
                 "Reply politely; ask a clarifying question if needed. Do not invent recipients."
             )
         else:
-            intent_block = "Intent: normal REPLY. Answer helpfully without inventing facts."
+            intent_block = (
+                "Intent: normal REPLY. Answer the LATEST message only; "
+                "use thread context for background, not as text to repeat."
+            )
         prompt = (
             "You draft an email REPLY that the mailbox owner will send.\n"
             f"Author of the reply (mailbox owner / YOU): {owner_name} <{owner}>\n"
             f"Incoming mail FROM (the person you reply TO): {counterpart_name} <{counterpart}>\n"
             f"Subject: {subject[:200]}\n"
-            f"Incoming message:\n{body[:1500]}\n\n"
+            f"LATEST message to answer (primary):\n{latest}\n\n"
+            f"Earlier thread context (background only — do NOT quote or reuse as your reply):\n"
+            f"{thread_ctx}\n\n"
             f"{intent_block}\n\n"
             "Mailbox owner prompt (cached behavior profile — follow tone/habits; "
-            "do not invent facts beyond this and the incoming mail):\n"
+            "do not invent facts beyond this and the latest message):\n"
             f"{profile_block[:2000]}\n\n"
             "Style examples from the mailbox owner's previously SENT mail "
-            "(match tone only; do not reuse as if you are that other person):\n"
+            "(match tone/length only; NEVER copy their wording verbatim):\n"
             f"{style}\n\n"
             "Hard rules:\n"
             f"1) Write ONLY as {owner_name} ({owner}).\n"
             f"2) Address {counterpart_name} ({counterpart}) — never greet or address {owner_name}.\n"
-            "3) Never write from the incoming sender's perspective; never sign as them.\n"
-            "4) Do not invent facts, attachments, recipients, or commitments.\n"
-            "5) Match the language of the incoming message (e.g. Dutch if Dutch).\n"
-            "6) Prefer the mailbox owner prompt for tone/habits when it conflicts with generic style.\n"
-            "7) Output only the reply body, no preamble.\n\n"
+            "3) Answer ONLY the LATEST message; thread context is background.\n"
+            "4) Never paste or lightly rewrite a prior reply already present in the thread.\n"
+            "5) Never write from the incoming sender's perspective; never sign as them.\n"
+            "6) Do not invent facts, attachments, recipients, or commitments.\n"
+            "7) Match the language of the LATEST message (e.g. Dutch if Dutch).\n"
+            "8) Prefer the mailbox owner prompt for tone/habits when it conflicts with generic style.\n"
+            "9) Output only the reply body, no preamble.\n\n"
             "Reply:\n"
         )
         try:
@@ -415,6 +438,11 @@ class OllamaInferenceClient:
                     mailbox_email=mailbox_email,
                     sender=sender,
                 )
+                cleaned = self._reject_thread_parrot(
+                    cleaned,
+                    thread_context=parts.thread_context,
+                    style_snippets=snippets,
+                )
                 if cleaned:
                     return cleaned
                 logger.info("ollama_draft_empty_fallback")
@@ -438,6 +466,36 @@ class OllamaInferenceClient:
                 status_code=503,
                 retryable=True,
             ) from None
+
+    def _reject_thread_parrot(
+        self,
+        draft: str | None,
+        *,
+        thread_context: str,
+        style_snippets: list[str],
+    ) -> str | None:
+        """Drop drafts that mostly paste prior thread/style wording."""
+        if not draft:
+            return None
+        haystacks = [thread_context or ""] + list(style_snippets or [])
+        blob = "\n".join(haystacks).lower()
+        if len(blob) < 20:
+            return draft
+        # Normalize whitespace for substring checks.
+        norm_draft = re.sub(r"\s+", " ", draft).strip().lower()
+        # Look for distinctive 18+ char phrases from the draft inside thread/style.
+        words = norm_draft.split()
+        for i in range(len(words)):
+            for width in (6, 5, 4):
+                if i + width > len(words):
+                    continue
+                phrase = " ".join(words[i : i + width])
+                if len(phrase) < 18:
+                    continue
+                if phrase in blob:
+                    logger.info("draft_rejected_thread_parrot")
+                    return None
+        return draft
 
     def _reject_inverted_perspective(
         self,
