@@ -20,6 +20,11 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.api
+    # Prefer: docker compose --env-file ../.env -f docker/docker-compose.yml up
+    # (or copy/.symlink repo-root .env into docker/.env)
+    env_file:
+      - path: ../.env
+        required: false
     environment:
       SPOQ_ENV: ${SPOQ_ENV:-dev}
       SPOQ_LOG_LEVEL: ${SPOQ_LOG_LEVEL:-INFO}
