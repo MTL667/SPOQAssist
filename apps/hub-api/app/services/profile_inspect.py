@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,11 @@ from app.services import learning
 from app.services.inference import get_inference_client
 
 logger = logging.getLogger(__name__)
+
+_DUTCH_HINTS = re.compile(
+    r"\b(hallo|hoi|beste|vriendelijke|groeten|bedankt|graag|bijlage|factuur|vergadering)\b",
+    re.I,
+)
 
 
 def build_profile_inspect(
@@ -69,6 +75,54 @@ def build_profile_inspect(
     )
 
 
+def grounded_behavior_summary(
+    *,
+    mailbox_email: str,
+    kind: str,
+    chunk_count: int,
+    routes: list[LearnedRouteOut],
+    samples: list[str],
+) -> str:
+    """Persona prompt from routes + Sent samples — no LLM, no invented empty habits."""
+    blob = "\n".join(samples)
+    dutch_hits = len(_DUTCH_HINTS.findall(blob))
+    avg_len = int(sum(len(s) for s in samples) / len(samples)) if samples else 0
+    if not samples:
+        lang = "unknown (no Sent samples available)"
+        length = "style not yet observable from samples"
+        habits = "Do not invent style habits until Sent samples are available."
+        sample_note = "0 recent Sent samples"
+    else:
+        if dutch_hits >= 2:
+            lang = "mostly Dutch"
+        else:
+            lang = "mostly English or mixed"
+        if avg_len < 280:
+            length = "short, concise replies"
+        else:
+            length = "medium-length replies"
+        habits = "Match tone of prior Sent mail; do not invent facts or recipients."
+        sample_note = f"{min(len(samples), 8)} recent Sent samples"
+    route_lines = [
+        f"- {r.pattern_key} → {r.route_email}"
+        + (f" ({r.route_name})" if r.route_name else "")
+        + f" [weight {r.weight:g}]"
+        for r in routes[:12]
+    ]
+    if not route_lines:
+        route_lines = ["- (none learned yet)"]
+    elif len(routes) > 12:
+        route_lines.append(f"- … and {len(routes) - 12} more")
+    return (
+        f"Mailbox: {mailbox_email} ({kind})\n"
+        f"Style: {lang}; {length} (from {sample_note}).\n"
+        f"Habits: {habits}\n"
+        "Routing:\n"
+        + "\n".join(route_lines)
+        + f"\nHistory: {chunk_count} Sent chunks indexed."
+    )
+
+
 def _behavior_summary(
     *,
     profile: MailboxProfile,
@@ -76,21 +130,25 @@ def _behavior_summary(
     routes: list[LearnedRouteOut],
     samples: list[str],
 ) -> BehaviorSummaryOut:
-    if chunk_count == 0:
-        route_note = ""
-        if routes:
-            route_note = (
-                f" Learned routes exist ({len(routes)}), but Sent history is empty — "
-                "no style habits invented from mail."
-            )
+    if chunk_count == 0 and not routes:
         return BehaviorSummaryOut(
             status="empty",
             text=(
                 f"No style profile yet for {profile.email}. "
                 "Sent history is empty or still syncing — no habits invented."
-                f"{route_note}"
             ),
         )
+    if chunk_count == 0 and routes:
+        # Routes alone — no style invented from missing Sent history.
+        text = grounded_behavior_summary(
+            mailbox_email=profile.email,
+            kind=str(profile.kind),
+            chunk_count=0,
+            routes=routes,
+            samples=[],
+        )
+        return BehaviorSummaryOut(status="ok", text=text, error=None)
+
     route_lines = [
         f"{r.pattern_key} → {r.route_email}"
         + (f" ({r.route_name})" if r.route_name else "")
@@ -106,17 +164,17 @@ def _behavior_summary(
             route_lines=route_lines,
             sample_snippets=samples,
         )
+        if (text or "").strip():
+            return BehaviorSummaryOut(status="ok", text=text.strip(), error=None)
+        logger.info("behavior_summary_empty_using_grounded")
     except Exception as exc:  # AppError or transport — keep inspector usable
         logger.info("behavior_summary_failed err_type=%s", type(exc).__name__)
-        return BehaviorSummaryOut(
-            status="error",
-            text=None,
-            error="Behavior summary unavailable — retry when the local model is ready.",
-        )
-    if not (text or "").strip():
-        return BehaviorSummaryOut(
-            status="error",
-            text=None,
-            error="Behavior summary was empty — retry.",
-        )
-    return BehaviorSummaryOut(status="ok", text=text.strip(), error=None)
+
+    fallback = grounded_behavior_summary(
+        mailbox_email=profile.email,
+        kind=str(profile.kind),
+        chunk_count=chunk_count,
+        routes=routes,
+        samples=samples,
+    )
+    return BehaviorSummaryOut(status="ok", text=fallback, error=None)

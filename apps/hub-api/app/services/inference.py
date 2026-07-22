@@ -371,6 +371,8 @@ class OllamaInferenceClient:
                         "model": self.instruct_model,
                         "prompt": prompt,
                         "stream": False,
+                        # qwen3:14b otherwise fills `thinking` and leaves `response` empty.
+                        "think": False,
                         "keep_alive": "2m",
                         "options": {
                             "temperature": 0.3,
@@ -480,6 +482,8 @@ class OllamaInferenceClient:
                         "model": self.instruct_model,
                         "prompt": prompt,
                         "stream": False,
+                        # qwen3:14b otherwise fills `thinking` and leaves `response` empty.
+                        "think": False,
                         "keep_alive": "2m",
                         "options": {
                             "temperature": 0.2,
@@ -489,7 +493,16 @@ class OllamaInferenceClient:
                     },
                 )
                 resp.raise_for_status()
-                return str(resp.json().get("response") or "").strip()
+                text = str(resp.json().get("response") or "").strip()
+                if text:
+                    return text
+                logger.info("ollama_behavior_summary_empty_response")
+                raise AppError(
+                    code="INFERENCE_UNAVAILABLE",
+                    message="Behavior summary was empty on the hub.",
+                    status_code=503,
+                    retryable=True,
+                )
         except httpx.TimeoutException:
             logger.info("ollama_behavior_summary_timeout")
             raise AppError(

@@ -117,7 +117,9 @@ def test_inspect_without_summary_still_returns_metadata(app_client, make_token):
     assert body["behavior_summary"]["text"] is None
 
 
-def test_inspect_summary_error_keeps_metadata(app_client, make_token, monkeypatch):
+def test_inspect_summary_model_down_uses_grounded_fallback(
+    app_client, make_token, monkeypatch
+):
     token = make_token(oid=OWNER_OID)
     profile_id = _connect(app_client, token, "failsum@contoso.com", "personal")
     indexed = app_client.post(
@@ -125,7 +127,10 @@ def test_inspect_summary_error_keeps_metadata(app_client, make_token, monkeypatc
         headers=_auth(token),
         json={
             "items": [
-                {"message_id": "sent-fail", "text": "Subject: hi\nThanks, will follow up."}
+                {
+                    "message_id": "sent-fail",
+                    "text": "Subject: hi\nHallo, bedankt — ik volg dit graag op.\nGroeten",
+                }
             ]
         },
     )
@@ -150,5 +155,9 @@ def test_inspect_summary_error_keeps_metadata(app_client, make_token, monkeypatc
     body = response.json()
     assert body["id"] == profile_id
     assert body["history_chunk_count"] >= 1
-    assert body["behavior_summary"]["status"] == "error"
-    assert body["behavior_summary"]["error"]
+    assert body["behavior_summary"]["status"] == "ok"
+    assert body["behavior_summary"]["error"] is None
+    text = body["behavior_summary"]["text"] or ""
+    assert "failsum@contoso.com" in text
+    assert "mostly Dutch" in text
+    assert "unavailable" not in text.lower()

@@ -1,5 +1,12 @@
 # Deferred work
 
+## Deferred from: spec-fix-behavior-summary-qwen-think (2026-07-22)
+
+- Optional `behavior_summary.status=degraded` + UI hint when using grounded fallback (fix spec chose usable `ok`)
+- Update parent inspector I/O row that still says model-down → error + Retry
+- Extra matrix tests for TimeoutException / empty Ollama response (RuntimeError path covered)
+- Draft path: if Ollama rejects unknown `think` field, soft-fallback like timeout
+
 ## Deferred from: spec-mailbox-profile-inspector (2026-07-22)
 
 - Persist/cache behavior summary in Postgres (Ask First left open; generate-on-open for now)
