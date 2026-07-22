@@ -39,26 +39,35 @@ async function parseError(response: Response): Promise<string> {
 }
 
 export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
-  // Office WebView + webpack proxy can hang forever if the LAN hub is unreachable.
-  // Bound with AbortController (widely supported) so the pane leaves "Checking…".
+  // Office WebView + webpack proxy can hang past AbortSignal when the LAN hub stalls.
+  // Race a hard timeout so the pane always leaves "Checking…".
   const controller = new AbortController();
   const onCallerAbort = () => controller.abort();
   if (signal) {
     if (signal.aborted) controller.abort();
     else signal.addEventListener("abort", onCallerAbort, { once: true });
   }
-  // LAN to Mac Studio can be flaky (several seconds); keep bound but not hair-trigger.
-  const timer = window.setTimeout(() => controller.abort(), 12000);
+  const timeoutMs = 8000;
+  let timer: number | undefined;
+  const timeoutReject = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => {
+      controller.abort();
+      reject(new Error("Hub health timed out"));
+    }, timeoutMs);
+  });
   try {
-    const response = await fetch(`${hubBaseUrl()}/health`, {
-      method: "GET",
-      signal: controller.signal,
-      headers: { Accept: "application/json" },
-    });
+    const response = await Promise.race([
+      fetch(`${hubBaseUrl()}/health`, {
+        method: "GET",
+        signal: controller.signal,
+        headers: { Accept: "application/json" },
+      }),
+      timeoutReject,
+    ]);
     if (!response.ok) throw new Error(`Hub health HTTP ${response.status}`);
     return (await response.json()) as HealthResponse;
   } finally {
-    window.clearTimeout(timer);
+    if (timer != null) window.clearTimeout(timer);
     if (signal) signal.removeEventListener("abort", onCallerAbort);
   }
 }
