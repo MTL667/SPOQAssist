@@ -158,23 +158,6 @@ def detect_reply_language(
     return "en"
 
 
-def fallback_ack_draft(*, lang: ReplyLang, greet_name: str) -> str:
-    """Short safe ack used when the model path fails or is rejected."""
-    if lang == "nl":
-        name = (greet_name or "").strip() or "daar"
-        return (
-            f"Dag {name},\n\n"
-            "Bedankt voor je bericht — ik kijk dit na en kom erop terug.\n\n"
-            "Met vriendelijke groet"
-        )
-    name = (greet_name or "").strip() or "there"
-    return (
-        f"Hi {name},\n\n"
-        "Thanks for your message — I will look into this and follow up shortly.\n\n"
-        "Best regards"
-    )
-
-
 def stub_reply_draft(
     *,
     lang: ReplyLang,

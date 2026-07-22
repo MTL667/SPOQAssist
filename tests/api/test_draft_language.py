@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from app.services.draft_language import (
     detect_reply_language,
-    fallback_ack_draft,
     is_thread_parrot,
 )
 
@@ -21,19 +20,6 @@ def test_detect_falls_back_to_profile_dutch_hints():
     latest = "OK."
     profile = "Tone is professional yet informal, with frequent use of Dutch phrases like 'Dag collega's'."
     assert detect_reply_language(latest, profile) == "nl"
-
-
-def test_dutch_fallback_not_english_stub():
-    draft = fallback_ack_draft(lang="nl", greet_name="Jean")
-    assert "Bedankt voor je bericht" in draft
-    assert "Thanks for your message" not in draft
-    assert "Dag Jean" in draft
-
-
-def test_english_fallback_remains():
-    draft = fallback_ack_draft(lang="en", greet_name="Jean")
-    assert "Thanks for your message" in draft
-    assert "Hi Jean" in draft
 
 
 def test_parrot_keeps_draft_with_common_dutch_closing():

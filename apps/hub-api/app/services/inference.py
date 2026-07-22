@@ -14,9 +14,7 @@ from app.core.config import get_settings
 from app.core.errors import AppError
 from app.domain.enums import Confidence, HistoryStatus
 from app.services.draft_language import (
-    ReplyLang,
     detect_reply_language,
-    fallback_ack_draft,
     is_thread_parrot,
     stub_reply_draft,
 )
@@ -381,7 +379,6 @@ class OllamaInferenceClient:
         profile_block = (behavior_summary or "").strip() or "(none cached)"
         lang = detect_reply_language(latest, behavior_summary)
         lang_name = "Dutch" if lang == "nl" else "English"
-        greet = _display_name_from_email(sender) or ""
         if category == "meeting":
             intent_block = (
                 "Intent: MEETING/CALL follow-up. Propose next steps or ask for times. "
@@ -458,7 +455,6 @@ class OllamaInferenceClient:
                     draft,
                     mailbox_email=mailbox_email,
                     sender=sender,
-                    lang=lang,
                 )
                 cleaned = self._reject_thread_parrot(
                     cleaned,
@@ -468,11 +464,12 @@ class OllamaInferenceClient:
                 )
                 if cleaned:
                     return cleaned
-                logger.info("ollama_draft_empty_fallback fallback_lang=%s", lang)
-                return fallback_ack_draft(lang=lang, greet_name=greet)
+                # No canned stub — UI shows Generate response when draft is absent.
+                logger.info("ollama_draft_empty lang=%s", lang)
+                return None
         except httpx.TimeoutException:
-            logger.info("ollama_draft_timeout_fallback fallback_lang=%s", lang)
-            return fallback_ack_draft(lang=lang, greet_name=greet)
+            logger.info("ollama_draft_timeout lang=%s", lang)
+            return None
         except httpx.HTTPError as exc:
             logger.info("ollama_draft_failed err_type=%s", type(exc).__name__)
             raise AppError(
@@ -507,31 +504,28 @@ class OllamaInferenceClient:
         *,
         mailbox_email: str,
         sender: str,
-        lang: ReplyLang = "en",
     ) -> str | None:
         """Drop drafts that greet the mailbox owner or sign as the incoming sender."""
         if not (draft or "").strip():
             return None
-        reply_lang: ReplyLang = lang
         owner_first = (_display_name_from_email(mailbox_email) or "").split(" ")[0].lower()
         sender_first = (_display_name_from_email(sender) or "").split(" ")[0].lower()
         head = draft.strip().splitlines()[0].lower() if draft.strip() else ""
-        greet = _display_name_from_email(sender) or ""
         # e.g. "Hoi Kevin," / "Dag Kevin," when Kevin is the mailbox owner
         if owner_first and len(owner_first) >= 3 and re.search(
             rf"\b(hoi|hallo|hi|dear|beste|dag)\s+{re.escape(owner_first)}\b",
             head,
         ):
-            logger.info("draft_rejected_greets_owner fallback_lang=%s", reply_lang)
-            return fallback_ack_draft(lang=reply_lang, greet_name=greet)
+            logger.info("draft_rejected_greets_owner")
+            return None
         # Signature line looks like the incoming sender
         if sender_first and len(sender_first) >= 3:
             if re.search(
                 rf"(?im)^(met vriendelijke groet(?:en)?|kind regards|best regards|regards).{{0,40}}\b{re.escape(sender_first)}\b",
                 draft,
             ) or re.search(rf"(?im)^{re.escape(sender_first)}\s+\w+\s*$", draft):
-                logger.info("draft_rejected_signs_as_sender fallback_lang=%s", reply_lang)
-                return fallback_ack_draft(lang=reply_lang, greet_name=greet)
+                logger.info("draft_rejected_signs_as_sender")
+                return None
         return draft
 
     def summarize_mailbox_behavior(
