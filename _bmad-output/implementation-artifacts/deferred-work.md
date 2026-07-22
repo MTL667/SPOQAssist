@@ -1,5 +1,11 @@
 # Deferred work
 
+## Deferred from: spec-draft-language-match-profile (2026-07-22)
+
+- Languages beyond NL/EN (Ask First)
+- End-to-end assertion that Ollama empty/timeout/inverted paths call `fallback_ack_draft` (unit coverage on helpers today)
+- Stronger language verification of successful model drafts (reject/retry when reply language mismatches detection)
+
 ## Deferred from: spec-use-cached-behavior-summary-in-drafts (2026-07-22)
 
 - Invalidate/refresh cached summary when indexed chunk count changes materially (stale cache)

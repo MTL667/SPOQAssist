@@ -13,6 +13,13 @@ import httpx
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.domain.enums import Confidence, HistoryStatus
+from app.services.draft_language import (
+    ReplyLang,
+    detect_reply_language,
+    fallback_ack_draft,
+    is_thread_parrot,
+    stub_reply_draft,
+)
 from app.services.thread_split import draft_context_blocks, split_thread_body
 
 logger = logging.getLogger(__name__)
@@ -183,13 +190,14 @@ class StubInferenceClient:
             if history_status == HistoryStatus.NONE:
                 draft = None
             else:
-                greet = _display_name_from_email(sender) or "there"
+                greet = _display_name_from_email(sender) or ""
                 latest = parts.latest_message.strip() or subject
+                lang = detect_reply_language(latest, behavior_summary)
                 # Answer the latest ask — never paste lines from quoted thread history.
-                draft = (
-                    f"Hi {greet},\n\n"
-                    f"Thanks for your note — regarding “{latest[:120].replace(chr(10), ' ')}”, "
-                    "I will follow up shortly.\n\nBest regards"
+                draft = stub_reply_draft(
+                    lang=lang,
+                    greet_name=greet,
+                    latest_snippet=latest,
                 )
                 if parts.split:
                     why.append(
@@ -371,6 +379,9 @@ class OllamaInferenceClient:
             full_thread = "(none)"
         style = " --- ".join(s[:250] for s in snippets[:3]) or "(none)"
         profile_block = (behavior_summary or "").strip() or "(none cached)"
+        lang = detect_reply_language(latest, behavior_summary)
+        lang_name = "Dutch" if lang == "nl" else "English"
+        greet = _display_name_from_email(sender) or ""
         if category == "meeting":
             intent_block = (
                 "Intent: MEETING/CALL follow-up. Propose next steps or ask for times. "
@@ -416,7 +427,7 @@ class OllamaInferenceClient:
             "4) Use the full mail thread only as context (who/what/why); never paste prior replies from it.\n"
             "5) Never write from the incoming sender's perspective; never sign as them.\n"
             "6) Do not invent facts, attachments, recipients, or commitments.\n"
-            "7) Match the language of the LATEST message (e.g. Dutch if Dutch).\n"
+            f"7) Write the entire reply in {lang_name} (language of the LATEST message / mailbox habits).\n"
             "8) Prefer the mailbox owner prompt for tone/habits when it conflicts with generic style.\n"
             "9) Output only the reply body, no preamble.\n\n"
             "Reply:\n"
@@ -447,6 +458,7 @@ class OllamaInferenceClient:
                     draft,
                     mailbox_email=mailbox_email,
                     sender=sender,
+                    lang=lang,
                 )
                 cleaned = self._reject_thread_parrot(
                     cleaned,
@@ -456,19 +468,11 @@ class OllamaInferenceClient:
                 )
                 if cleaned:
                     return cleaned
-                logger.info("ollama_draft_empty_fallback")
-                greet = _display_name_from_email(sender) or "there"
-                return (
-                    f"Hi {greet},\n\nThanks for your message — I will look into this and follow up shortly.\n\n"
-                    "Best regards"
-                )
+                logger.info("ollama_draft_empty_fallback fallback_lang=%s", lang)
+                return fallback_ack_draft(lang=lang, greet_name=greet)
         except httpx.TimeoutException:
-            logger.info("ollama_draft_timeout_fallback")
-            greet = _display_name_from_email(sender) or "there"
-            return (
-                f"Hi {greet},\n\nThanks for your message — I will look into this and follow up shortly.\n\n"
-                "Best regards"
-            )
+            logger.info("ollama_draft_timeout_fallback fallback_lang=%s", lang)
+            return fallback_ack_draft(lang=lang, greet_name=greet)
         except httpx.HTTPError as exc:
             logger.info("ollama_draft_failed err_type=%s", type(exc).__name__)
             raise AppError(
@@ -486,26 +490,15 @@ class OllamaInferenceClient:
         style_snippets: list[str],
     ) -> str | None:
         """Drop drafts that mostly paste prior thread/style wording."""
-        if not draft:
+        if not (draft or "").strip():
             return None
-        haystacks = [thread_context or ""] + list(style_snippets or [])
-        blob = "\n".join(haystacks).lower()
-        if len(blob) < 20:
-            return draft
-        # Normalize whitespace for substring checks.
-        norm_draft = re.sub(r"\s+", " ", draft).strip().lower()
-        # Look for distinctive 18+ char phrases from the draft inside thread/style.
-        words = norm_draft.split()
-        for i in range(len(words)):
-            for width in (6, 5, 4):
-                if i + width > len(words):
-                    continue
-                phrase = " ".join(words[i : i + width])
-                if len(phrase) < 18:
-                    continue
-                if phrase in blob:
-                    logger.info("draft_rejected_thread_parrot")
-                    return None
+        if is_thread_parrot(
+            draft,
+            thread_context=thread_context,
+            style_snippets=style_snippets,
+        ):
+            logger.info("draft_rejected_thread_parrot")
+            return None
         return draft
 
     def _reject_inverted_perspective(
@@ -514,36 +507,31 @@ class OllamaInferenceClient:
         *,
         mailbox_email: str,
         sender: str,
+        lang: ReplyLang = "en",
     ) -> str | None:
         """Drop drafts that greet the mailbox owner or sign as the incoming sender."""
-        if not draft:
+        if not (draft or "").strip():
             return None
+        reply_lang: ReplyLang = lang
         owner_first = (_display_name_from_email(mailbox_email) or "").split(" ")[0].lower()
         sender_first = (_display_name_from_email(sender) or "").split(" ")[0].lower()
         head = draft.strip().splitlines()[0].lower() if draft.strip() else ""
-        # e.g. "Hoi Kevin," when Kevin is the mailbox owner
+        greet = _display_name_from_email(sender) or ""
+        # e.g. "Hoi Kevin," / "Dag Kevin," when Kevin is the mailbox owner
         if owner_first and len(owner_first) >= 3 and re.search(
-            rf"\b(hoi|hallo|hi|dear|beste)\s+{re.escape(owner_first)}\b",
+            rf"\b(hoi|hallo|hi|dear|beste|dag)\s+{re.escape(owner_first)}\b",
             head,
         ):
-            logger.info("draft_rejected_greets_owner")
-            greet = _display_name_from_email(sender) or "there"
-            return (
-                f"Hi {greet},\n\nThanks for your message — I will look into this and follow up shortly.\n\n"
-                f"Best regards"
-            )
+            logger.info("draft_rejected_greets_owner fallback_lang=%s", reply_lang)
+            return fallback_ack_draft(lang=reply_lang, greet_name=greet)
         # Signature line looks like the incoming sender
         if sender_first and len(sender_first) >= 3:
             if re.search(
-                rf"(?im)^(met vriendelijke groeten|kind regards|best regards|regards).{{0,40}}\b{re.escape(sender_first)}\b",
+                rf"(?im)^(met vriendelijke groet(?:en)?|kind regards|best regards|regards).{{0,40}}\b{re.escape(sender_first)}\b",
                 draft,
             ) or re.search(rf"(?im)^{re.escape(sender_first)}\s+\w+\s*$", draft):
-                logger.info("draft_rejected_signs_as_sender")
-                greet = _display_name_from_email(sender) or "there"
-                return (
-                    f"Hi {greet},\n\nThanks for your message — I will look into this and follow up shortly.\n\n"
-                    f"Best regards"
-                )
+                logger.info("draft_rejected_signs_as_sender fallback_lang=%s", reply_lang)
+                return fallback_ack_draft(lang=reply_lang, greet_name=greet)
         return draft
 
     def summarize_mailbox_behavior(
