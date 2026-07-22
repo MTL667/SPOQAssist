@@ -8,12 +8,13 @@ import {
   Title3,
 } from "@fluentui/react-components";
 import {
-  acquireHubAccessToken,
+  acquireHubAccessTokenDetailed,
   clearMailboxProfileCache,
   getCachedMailboxEmail,
   getMailboxProfileId,
   getOfficeUserEmail,
   setMailboxProfileId,
+  type SsoErrorInfo,
 } from "./api/auth";
 import {
   analyzeMessage,
@@ -30,6 +31,7 @@ import { AnalyzingState } from "./components/AnalyzingState";
 import { ConfirmOutboundDialog } from "./components/ConfirmOutboundDialog";
 import { HubUnavailable } from "./components/HubUnavailable";
 import { RoutePicker } from "./components/RoutePicker";
+import { SignInPanel } from "./components/SignInPanel";
 import { SuggestionHero } from "./components/SuggestionHero";
 import { SuggestionReviewStack } from "./components/SuggestionReviewStack";
 import {
@@ -61,7 +63,14 @@ const useStyles = makeStyles({
   profileBusy: { color: "#5B6B73", marginTop: "8px" },
 });
 
-function historyProfileLabel(status: HistoryProfileStatus, err: string | null): string {
+function historyProfileLabel(
+  status: HistoryProfileStatus,
+  err: string | null,
+  signedIn: boolean
+): string {
+  if (!signedIn) {
+    return "Sign in to build or refresh the mailbox profile.";
+  }
   if (status === "syncing" || status === "not_started") {
     return "Profiel opbouwen… (analyze kan gewoon door)";
   }
@@ -93,6 +102,8 @@ export function App(): React.JSX.Element {
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
   const [historyStatus, setHistoryStatus] = useState<HistoryProfileStatus>("not_started");
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [needsSignIn, setNeedsSignIn] = useState(false);
+  const [ssoError, setSsoError] = useState<SsoErrorInfo | null>(null);
   const analyzeSeq = useRef(0);
   const historyPollRef = useRef<number | null>(null);
   /** One history refresh per taskpane session per mailbox profile. */
@@ -190,13 +201,16 @@ export function App(): React.JSX.Element {
     token: string;
     profileId: string;
   } | null> => {
-    const token = await acquireHubAccessToken();
-    if (!token) {
-      setErrorMessage(
-        "Sign-in required. Configure Office SSO (see docs/runbooks/office-sso-setup.md) or set localStorage spoq_access_token for sideload."
-      );
+    const acquired = await acquireHubAccessTokenDetailed();
+    if (!acquired.ok) {
+      setNeedsSignIn(true);
+      setSsoError(acquired.ssoError);
+      setErrorMessage(null);
       return null;
     }
+    setNeedsSignIn(false);
+    setSsoError(null);
+    const token = acquired.token;
 
     const mail = await getSelectedMail();
     const sharedEmail = getSharedMailboxEmail();
@@ -272,8 +286,19 @@ export function App(): React.JSX.Element {
     } catch (err) {
       if (seq !== analyzeSeq.current) return;
       setSuggestion(null);
+      const msg = err instanceof Error ? err.message : "Analyze failed";
+      if (/401|unauthor|auth/i.test(msg)) {
+        setNeedsSignIn(true);
+        setSsoError({
+          code: "hub_401",
+          message: "Hub rejected the access token. Retry SSO or paste a fresh token.",
+        });
+        setState("idle");
+        setErrorMessage(null);
+        return;
+      }
       setState("error");
-      setErrorMessage(err instanceof Error ? err.message : "Analyze failed");
+      setErrorMessage(msg);
     }
   }, [clearSuggestion, ensureSession]);
 
@@ -409,10 +434,28 @@ export function App(): React.JSX.Element {
         block
         aria-live="polite"
       >
-        {historyProfileLabel(historyStatus, historyError)}
+        {historyProfileLabel(historyStatus, historyError, !needsSignIn)}
       </Text>
 
-      {state === "idle" && !suggestion ? (
+      {needsSignIn ? (
+        <SignInPanel
+          ssoError={ssoError}
+          onRetrySso={() => {
+            setNeedsSignIn(false);
+            void ensureSession().then((session) => {
+              if (session) void runAnalyze();
+            });
+          }}
+          onTokenReady={() => {
+            setNeedsSignIn(false);
+            void ensureSession().then((session) => {
+              if (session) void runAnalyze();
+            });
+          }}
+        />
+      ) : null}
+
+      {!needsSignIn && state === "idle" && !suggestion ? (
         <Text className={styles.meta} block>
           Select a message in Outlook to analyze. No suggestion is shown until analysis completes.
         </Text>
@@ -420,7 +463,7 @@ export function App(): React.JSX.Element {
 
       {state === "analyzing" ? <AnalyzingState /> : null}
 
-      {state === "error" || errorMessage ? (
+      {!needsSignIn && (state === "error" || errorMessage) ? (
         <Text className={styles.warn} block>
           {errorMessage || "Something went wrong."}
         </Text>
