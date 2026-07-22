@@ -59,6 +59,16 @@ class InferenceClient(Protocol):
         include_draft: bool,
     ) -> AnalyzeSignals: ...
 
+    def summarize_mailbox_behavior(
+        self,
+        *,
+        mailbox_email: str,
+        kind: str,
+        chunk_count: int,
+        route_lines: list[str],
+        sample_snippets: list[str],
+    ) -> str: ...
+
     def health(self) -> dict: ...
 
 
@@ -183,6 +193,25 @@ class StubInferenceClient:
             why=why,
             draft=draft,
             history_status=history_status,
+        )
+
+    def summarize_mailbox_behavior(
+        self,
+        *,
+        mailbox_email: str,
+        kind: str,
+        chunk_count: int,
+        route_lines: list[str],
+        sample_snippets: list[str],
+    ) -> str:
+        del sample_snippets  # never echo bodies; stub uses counts + routes only
+        routes = "; ".join(route_lines[:6]) if route_lines else "(none learned)"
+        return (
+            f"Mailbox: {mailbox_email} ({kind})\n"
+            f"Style: grounded in {chunk_count} indexed Sent chunk(s); "
+            "prefers concise, factual replies (stub summary).\n"
+            f"Routing: {routes}\n"
+            f"History: {chunk_count} chunks indexed."
         )
 
     def health(self) -> dict:
@@ -418,6 +447,65 @@ class OllamaInferenceClient:
                     f"Best regards"
                 )
         return draft
+
+    def summarize_mailbox_behavior(
+        self,
+        *,
+        mailbox_email: str,
+        kind: str,
+        chunk_count: int,
+        route_lines: list[str],
+        sample_snippets: list[str],
+    ) -> str:
+        routes = "\n".join(f"- {r}" for r in route_lines[:12]) or "- (none)"
+        # Truncate samples for the model only — never returned to clients.
+        samples = "\n---\n".join(s[:400] for s in sample_snippets[:6]) or "(none)"
+        prompt = (
+            "Summarize this mailbox owner's email behavior for an internal assistant.\n"
+            f"Mailbox: {mailbox_email} ({kind})\n"
+            f"Indexed Sent chunks: {chunk_count}\n"
+            f"Learned routing patterns:\n{routes}\n\n"
+            "Style samples from previously SENT mail (tone only; do not quote long passages):\n"
+            f"{samples}\n\n"
+            "Write 4–8 short lines covering: typical reply style/tone/language, "
+            "how they handle requests, and any forwarding/routing habits.\n"
+            "Do not invent recipients, facts, or habits not supported by the inputs.\n"
+            "If history is thin, say so. Output plain text only.\n"
+        )
+        try:
+            with httpx.Client(timeout=45.0) as client:
+                resp = client.post(
+                    f"{self.base}/api/generate",
+                    json={
+                        "model": self.instruct_model,
+                        "prompt": prompt,
+                        "stream": False,
+                        "keep_alive": "2m",
+                        "options": {
+                            "temperature": 0.2,
+                            "num_predict": 220,
+                            "num_ctx": 4096,
+                        },
+                    },
+                )
+                resp.raise_for_status()
+                return str(resp.json().get("response") or "").strip()
+        except httpx.TimeoutException:
+            logger.info("ollama_behavior_summary_timeout")
+            raise AppError(
+                code="INFERENCE_UNAVAILABLE",
+                message="Behavior summary timed out on the hub.",
+                status_code=503,
+                retryable=True,
+            ) from None
+        except httpx.HTTPError as exc:
+            logger.info("ollama_behavior_summary_failed err_type=%s", type(exc).__name__)
+            raise AppError(
+                code="INFERENCE_UNAVAILABLE",
+                message="Instruct model is unavailable on the hub.",
+                status_code=503,
+                retryable=True,
+            ) from None
 
     def health(self) -> dict:
         try:

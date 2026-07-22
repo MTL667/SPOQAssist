@@ -116,11 +116,31 @@ def count_chunks(db: Session, mailbox_profile_id: str) -> int:
     return int(db.execute(stmt).scalar_one())
 
 
+def count_indexed_messages(db: Session, mailbox_profile_id: str) -> int:
+    stmt = select(func.count(func.distinct(MailChunk.source_message_id))).where(
+        MailChunk.mailbox_profile_id == mailbox_profile_id
+    )
+    return int(db.execute(stmt).scalar_one() or 0)
+
+
 def indexed_source_ids(db: Session, mailbox_profile_id: str) -> set[str]:
     stmt = select(MailChunk.source_message_id).where(
         MailChunk.mailbox_profile_id == mailbox_profile_id
     )
     return {str(row) for row in db.execute(stmt).scalars().all()}
+
+
+def sample_chunk_texts(
+    db: Session, mailbox_profile_id: str, *, limit: int = 8
+) -> list[str]:
+    """Hub-only samples for summarization — never expose via API as-is."""
+    stmt = (
+        select(MailChunk.chunk_text)
+        .where(MailChunk.mailbox_profile_id == mailbox_profile_id)
+        .order_by(MailChunk.created_at.desc())
+        .limit(limit)
+    )
+    return [str(t)[:600] for t in db.execute(stmt).scalars().all() if t]
 
 
 def index_chunks(

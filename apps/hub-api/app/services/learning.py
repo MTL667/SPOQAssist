@@ -15,6 +15,18 @@ def pattern_key_from_sender(sender: str) -> str:
     return re.sub(r"\s+", "", sender.strip().lower())[:512]
 
 
+def list_routing_edges(
+    db: Session, mailbox_profile_id: str, *, limit: int = 100
+) -> list[RoutingEdge]:
+    stmt = (
+        select(RoutingEdge)
+        .where(RoutingEdge.mailbox_profile_id == mailbox_profile_id)
+        .order_by(RoutingEdge.weight.desc(), RoutingEdge.updated_at.desc())
+        .limit(max(1, min(limit, 500)))
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
 def apply_routing_correction(
     db: Session,
     *,

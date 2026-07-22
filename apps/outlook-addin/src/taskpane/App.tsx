@@ -23,12 +23,15 @@ import {
   connectMailbox,
   fetchHealth,
   fetchMailboxProfile,
+  inspectMailboxProfile,
   submitFeedback,
   syncMailboxIndex,
   type HistoryProfileStatus,
+  type ProfileInspect,
 } from "./api/client";
 import { mapSuggestion } from "./api/mappers";
 import { AnalyzingState } from "./components/AnalyzingState";
+import { CheckProfilePanel } from "./components/CheckProfilePanel";
 import { ConfirmOutboundDialog } from "./components/ConfirmOutboundDialog";
 import { HubUnavailable } from "./components/HubUnavailable";
 import { RoutePicker } from "./components/RoutePicker";
@@ -105,7 +108,12 @@ export function App(): React.JSX.Element {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [needsSignIn, setNeedsSignIn] = useState(false);
   const [ssoError, setSsoError] = useState<SsoErrorInfo | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileInspect, setProfileInspect] = useState<ProfileInspect | null>(null);
   const analyzeSeq = useRef(0);
+  const inspectSeq = useRef(0);
   const historyPollRef = useRef<number | null>(null);
   /** One history refresh per taskpane session per mailbox profile. */
   const historyRefreshedFor = useRef<string | null>(null);
@@ -200,6 +208,28 @@ export function App(): React.JSX.Element {
     [stopHistoryPoll]
   );
 
+  const connectMailboxSession = useCallback(
+    async (
+      token: string,
+      connectEmail: string,
+      kind: "personal" | "shared"
+    ): Promise<string | null> => {
+      try {
+        const connected = await connectMailbox({
+          token,
+          email: connectEmail,
+          kind,
+        });
+        setMailboxProfileId(connected.id, connectEmail);
+        return connected.id;
+      } catch (err) {
+        setErrorMessage(err instanceof Error ? err.message : "Mailbox connect failed");
+        return null;
+      }
+    },
+    []
+  );
+
   const ensureSession = useCallback(async (): Promise<{
     token: string;
     profileId: string;
@@ -216,15 +246,21 @@ export function App(): React.JSX.Element {
     const token = acquired.token;
 
     const mail = await getSelectedMail();
-    const sharedEmail = getSharedMailboxEmail();
-    const isShared = Boolean(mail?.isSharedContext || sharedEmail);
-    const connectEmail = (
-      isShared ? sharedEmail || mail?.sender : getOfficeUserEmail()
-    )?.toLowerCase();
+    const sharedEmail = getSharedMailboxEmail()?.toLowerCase() || null;
+    const officeEmail = getOfficeUserEmail()?.toLowerCase() || null;
+    // Never use the selected message's From: as mailbox identity — that churns
+    // profile cache when switching mails and feels like a new profile.
+    const isShared = Boolean(mail?.isSharedContext && sharedEmail) || Boolean(sharedEmail);
+    const connectEmail = (isShared ? sharedEmail : officeEmail) || null;
     if (!connectEmail) {
-      setErrorMessage("Could not read mailbox identity from Outlook.");
+      setErrorMessage(
+        isShared
+          ? "Shared mailbox e-mail ontbreekt — kan geen stabiel profiel koppelen."
+          : "Could not read mailbox identity from Outlook."
+      );
       return null;
     }
+    const kind: "personal" | "shared" = isShared ? "shared" : "personal";
 
     let profileId = getMailboxProfileId();
     const cachedEmail = getCachedMailboxEmail();
@@ -234,18 +270,8 @@ export function App(): React.JSX.Element {
     }
 
     if (!profileId) {
-      try {
-        const connected = await connectMailbox({
-          token,
-          email: connectEmail,
-          kind: isShared ? "shared" : "personal",
-        });
-        profileId = connected.id;
-        setMailboxProfileId(profileId, connectEmail);
-      } catch (err) {
-        setErrorMessage(err instanceof Error ? err.message : "Mailbox connect failed");
-        return null;
-      }
+      profileId = await connectMailboxSession(token, connectEmail, kind);
+      if (!profileId) return null;
     }
 
     // Outlook open / first session touch only — not on every analyze.
@@ -254,7 +280,67 @@ export function App(): React.JSX.Element {
       refreshHistoryProfile(token, profileId);
     }
     return { token, profileId };
-  }, [refreshHistoryProfile]);
+  }, [connectMailboxSession, refreshHistoryProfile]);
+
+  const loadProfileInspect = useCallback(
+    async (includeSummary = true) => {
+      const seq = ++inspectSeq.current;
+      setProfileLoading(true);
+      setProfileError(null);
+      try {
+        let session = await ensureSession();
+        if (!session) {
+          if (seq !== inspectSeq.current) return;
+          setProfileInspect(null);
+          setProfileError("Sign in / connect first to view the mailbox profile.");
+          return;
+        }
+        try {
+          const data = await inspectMailboxProfile({
+            token: session.token,
+            mailboxProfileId: session.profileId,
+            includeSummary,
+          });
+          if (seq !== inspectSeq.current) return;
+          setProfileInspect(data);
+        } catch (err) {
+          const status = (err as Error & { status?: number }).status;
+          if (status === 401) {
+            if (seq !== inspectSeq.current) return;
+            setNeedsSignIn(true);
+            setProfileError("Sessie verlopen — meld opnieuw aan.");
+            return;
+          }
+          if (status === 404) {
+            clearMailboxProfileCache();
+            historyRefreshedFor.current = null;
+            session = await ensureSession();
+            if (!session) {
+              if (seq !== inspectSeq.current) return;
+              setProfileInspect(null);
+              setProfileError("Profiel niet gevonden — reconnect mislukt.");
+              return;
+            }
+            const data = await inspectMailboxProfile({
+              token: session.token,
+              mailboxProfileId: session.profileId,
+              includeSummary,
+            });
+            if (seq !== inspectSeq.current) return;
+            setProfileInspect(data);
+            return;
+          }
+          throw err;
+        }
+      } catch (err) {
+        if (seq !== inspectSeq.current) return;
+        setProfileError(err instanceof Error ? err.message : "Profiel laden mislukt");
+      } finally {
+        if (seq === inspectSeq.current) setProfileLoading(false);
+      }
+    },
+    [ensureSession]
+  );
 
   const runAnalyze = useCallback(async () => {
     const seq = ++analyzeSeq.current;
@@ -569,6 +655,32 @@ export function App(): React.JSX.Element {
       <Button appearance="secondary" style={{ marginTop: 12 }} onClick={() => void runAnalyze()}>
         Analyze selected message
       </Button>
+
+      {!needsSignIn ? (
+        <Button
+          appearance="secondary"
+          style={{ marginTop: 8 }}
+          onClick={() => {
+            setProfileOpen(true);
+            void loadProfileInspect(true);
+          }}
+        >
+          Check profiel
+        </Button>
+      ) : null}
+
+      {profileOpen ? (
+        <CheckProfilePanel
+          data={profileInspect}
+          loading={profileLoading}
+          error={profileError}
+          onClose={() => {
+            setProfileOpen(false);
+            setProfileError(null);
+          }}
+          onRetrySummary={() => void loadProfileInspect(true)}
+        />
+      ) : null}
 
       {confirmOpen ? (
         <ConfirmOutboundDialog

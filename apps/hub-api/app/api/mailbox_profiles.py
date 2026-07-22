@@ -15,8 +15,10 @@ from app.domain.schemas import (
     ConnectMailboxResponse,
     ContentStubOut,
     MailboxProfileOut,
+    ProfileInspectOut,
 )
 from app.services.mail_graph import get_mail_graph_client
+from app.services.profile_inspect import build_profile_inspect
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +98,22 @@ async def connect_mailbox(
 @router.get("/{mailbox_profile_id}", response_model=MailboxProfileOut)
 async def get_mailbox_profile(access: MailboxContentAccess, db: DbSession) -> MailboxProfileOut:
     return _to_out(access.profile, db)
+
+
+@router.get("/{mailbox_profile_id}/inspect", response_model=ProfileInspectOut)
+def inspect_mailbox_profile(
+    access: MailboxContentAccess,
+    db: DbSession,
+    include_summary: bool = True,
+) -> ProfileInspectOut:
+    """User-facing profile inspector: stats, learned routes, hub-side behavior summary.
+
+    Sync def on purpose: summary may call local Ollama (~45s) and must not block
+    the asyncio loop the way an ``async def`` wrapping sync HTTP would.
+    """
+    return build_profile_inspect(
+        db, access.profile, include_summary=include_summary
+    )
 
 
 @router.get("/{mailbox_profile_id}/content_stub", response_model=ContentStubOut)

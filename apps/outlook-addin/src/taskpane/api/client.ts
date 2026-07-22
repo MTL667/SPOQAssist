@@ -262,6 +262,54 @@ export async function fetchMailboxProfile(params: {
   };
 }
 
+export interface ProfileInspect {
+  id: string;
+  email: string;
+  kind: string;
+  connection_status: string;
+  connection_error: string | null;
+  history_status: HistoryProfileStatus;
+  last_history_sync_at: string | null;
+  history_sync_error: string | null;
+  history_chunk_count: number;
+  indexed_message_count: number;
+  routes: Array<{
+    pattern_key: string;
+    route_email: string;
+    route_name: string | null;
+    weight: number;
+  }>;
+  behavior_summary: {
+    text: string | null;
+    status: string;
+    error: string | null;
+  };
+}
+
+export async function inspectMailboxProfile(params: {
+  token: string;
+  mailboxProfileId: string;
+  includeSummary?: boolean;
+}): Promise<ProfileInspect> {
+  const qs =
+    params.includeSummary === false ? "?include_summary=false" : "?include_summary=true";
+  const response = await fetch(
+    `${hubBaseUrl()}/v1/mailbox_profiles/${params.mailboxProfileId}/inspect${qs}`,
+    {
+      headers: {
+        Authorization: `Bearer ${params.token}`,
+        Accept: "application/json",
+      },
+    }
+  );
+  if (!response.ok) {
+    const err = new Error(await parseError(response)) as Error & { status?: number };
+    err.status = response.status;
+    throw err;
+  }
+  return (await response.json()) as ProfileInspect;
+}
+
 export async function connectMailbox(params: {
   token: string;
   email: string;

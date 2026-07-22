@@ -1,5 +1,13 @@
 # Deferred work
 
+## Deferred from: spec-mailbox-profile-inspector (2026-07-22)
+
+- Persist/cache behavior summary in Postgres (Ask First left open; generate-on-open for now)
+- Prompt-injection hardening for behavior summary (same broader inference pass as drafts)
+- Admin-denied personal inspect automated coverage (entitlement already shared with analyze)
+- Add-in integration test for Mail A→B stable profile id (manual check remains)
+- Cap/paginate routes UI beyond hub limit(100); kind flip cache for personal↔shared
+
 ## Deferred from: spec-mailbox-history-profile-lifecycle (2026-07-22)
 
 - Report attempted/listed Sent Items count alongside indexed_count for richer progress UI

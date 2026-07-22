@@ -186,3 +186,31 @@ class RetentionRunOut(BaseModel):
     purged_chunks: int
     purged_suggestions: int
     purged_audit: int
+
+
+class LearnedRouteOut(BaseModel):
+    pattern_key: str
+    route_email: str
+    route_name: str | None = None
+    weight: float = 1.0
+
+
+class BehaviorSummaryOut(BaseModel):
+    text: str | None = None
+    status: str = "ok"  # ok | empty | error | skipped
+    error: str | None = None
+
+
+class ProfileInspectOut(BaseModel):
+    id: str
+    email: str
+    kind: MailboxKind
+    connection_status: ConnectionStatus
+    connection_error: str | None = None
+    history_status: HistoryProfileStatus = HistoryProfileStatus.NOT_STARTED
+    last_history_sync_at: str | None = None
+    history_sync_error: str | None = None
+    history_chunk_count: int = 0
+    indexed_message_count: int = 0
+    routes: list[LearnedRouteOut] = Field(default_factory=list)
+    behavior_summary: BehaviorSummaryOut = Field(default_factory=BehaviorSummaryOut)
