@@ -39,12 +39,40 @@ def test_analyze_returns_suggestion_dto(app_client, make_token):
     assert body["confidence"] in {"high", "medium", "low"}
     assert body["priority"]
     assert any(w["name"] == "virus.exe" for w in body["attachment_warnings"])
-    # Keyword forward/route must not invent Contoso demo recipients.
+    # Keyword forward/route must not invent Contoso demo recipients
+    # and must not set primary category to forward without a learned route.
     assert body.get("suggested_route") is None
     assert "forward" not in (body.get("actions") or [])
+    assert body["category"] != "forward"
     blob = str(body).lower()
     assert "desk@contoso.com" not in blob
     assert "service desk" not in blob
+
+
+def test_analyze_directed_mail_not_forward_without_route(app_client, make_token):
+    token = make_token(oid=OWNER_OID)
+    profile_id = _connect(app_client, token, "kevin@contoso.com", "personal")
+    response = app_client.post(
+        f"/v1/mailbox_profiles/{profile_id}/analyze",
+        headers=_auth(token),
+        json={
+            "message_id": "msg-directed",
+            "include_draft": False,
+            "subject": "Re: product adjustments",
+            "body": (
+                "Hi Kevin, a few things still need work for SPOQ: "
+                "team needs report access, inspector upload, and ACEG invoicing. "
+                "Can you pick this up?"
+            ),
+            "sender": "lieselot@example.com",
+            "attachment_names": [],
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body.get("suggested_route") is None
+    assert "forward" not in (body.get("actions") or [])
+    assert body["category"] != "forward"
 
 
 def test_analyze_meeting_no_invented_route(app_client, make_token):

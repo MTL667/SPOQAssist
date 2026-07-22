@@ -116,13 +116,6 @@ class StubInferenceClient:
         meeting_intent = any(
             k in text for k in ("meeting", "call", "afspraak", "uitnodiging", "calendar")
         )
-        category = "action_required"
-        if "invoice" in text:
-            category = "invoice"
-        elif meeting_intent:
-            category = "meeting"
-        elif forward_intent:
-            category = "forward"
 
         # Routes only from learned edges — never invent demo recipients (e.g. Contoso).
         route_email, route_name = None, None
@@ -133,6 +126,15 @@ class StubInferenceClient:
             else:
                 confidence = Confidence.HIGH
 
+        # Primary category: never "forward" without a real route (directed mail → reply path).
+        category = "action_required"
+        if "invoice" in text:
+            category = "invoice"
+        elif meeting_intent:
+            category = "meeting"
+        elif forward_intent and route_email:
+            category = "forward"
+
         why = [{"code": "keyword", "text": f"Matched category signals for {category}."}]
         if retrieved_snippets:
             why.append({"code": "history", "text": "Similar prior outbound style retrieved."})
@@ -142,7 +144,7 @@ class StubInferenceClient:
             why.append(
                 {
                     "code": "route_unknown",
-                    "text": "Forward may help, but no learned route exists for this sender yet.",
+                    "text": "Forward wording detected, but no learned route exists — treat as a reply for the mailbox owner.",
                 }
             )
         if meeting_intent or category == "meeting":

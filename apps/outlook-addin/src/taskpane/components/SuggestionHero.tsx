@@ -19,6 +19,14 @@ const useStyles = makeStyles({
   },
 });
 
+function primaryActionLabel(suggestion: SuggestionViewModel): string {
+  // Never show "forward" as the action unless a real route exists.
+  if (suggestion.suggestedRoute) return "forward";
+  if (suggestion.actions?.includes("reply") || suggestion.draft) return "reply";
+  if (suggestion.category === "forward") return "reply";
+  return suggestion.category || "reply";
+}
+
 export function SuggestionHero({
   suggestion,
   onAccept,
@@ -33,11 +41,12 @@ export function SuggestionHero({
   onChangeRoute: () => void;
 }): React.JSX.Element {
   const styles = useStyles();
+  const action = primaryActionLabel(suggestion);
   return (
     <section className={styles.card} aria-label="High confidence suggestion">
       <Title3>Suggested action</Title3>
       <Text className={styles.meta} block>
-        {suggestion.category} · {suggestion.priority} · High confidence
+        {action} · {suggestion.priority} · High confidence
       </Text>
       {suggestion.suggestedRoute ? (
         <Text block>
