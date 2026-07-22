@@ -44,6 +44,15 @@ class HistoryStatus(StrEnum):
     NONE = "none"
 
 
+class HistoryProfileStatus(StrEnum):
+    """Lifecycle of the per-mailbox Sent Items embedding profile."""
+
+    NOT_STARTED = "not_started"
+    SYNCING = "syncing"
+    READY = "ready"
+    FAILED = "failed"
+
+
 class InferenceMode(StrEnum):
     STUB = "stub"
     OLLAMA = "ollama"

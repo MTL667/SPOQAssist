@@ -58,6 +58,9 @@ def reset_engine() -> None:
 def init_db() -> None:
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
+    from app.db.schema_ensure import ensure_mailbox_history_columns
+
+    ensure_mailbox_history_columns(engine)
 
 
 def get_db() -> Generator[Session, None, None]:

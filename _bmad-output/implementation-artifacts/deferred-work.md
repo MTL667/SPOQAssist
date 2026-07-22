@@ -1,5 +1,11 @@
 # Deferred work
 
+## Deferred from: spec-mailbox-history-profile-lifecycle (2026-07-22)
+
+- Report attempted/listed Sent Items count alongside indexed_count for richer progress UI
+- Graph delta-link cursor for true incremental history beyond newest-N listing
+- Full Alembic migration framework (pilot uses create_all + ALTER ensure)
+
 ## Deferred from: spec-real-intent-routing-and-drafts (2026-07-22)
 
 - Live Ollama-mode integration tests for meeting/no-route (CI uses stub; classify path is shared)

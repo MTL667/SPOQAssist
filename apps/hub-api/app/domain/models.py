@@ -27,6 +27,15 @@ class MailboxProfile(Base):
     graph_mailbox_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     connection_status: Mapped[str] = mapped_column(String(32), default="pending")
     connection_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Sent Items embedding profile lifecycle (RAG style index — not a LoRA).
+    history_status: Mapped[str] = mapped_column(String(32), default="not_started")
+    history_sync_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    history_sync_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_history_sync_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow

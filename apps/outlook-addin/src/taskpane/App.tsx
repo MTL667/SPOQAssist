@@ -20,8 +20,10 @@ import {
   confirmOutbound,
   connectMailbox,
   fetchHealth,
+  fetchMailboxProfile,
   submitFeedback,
   syncMailboxIndex,
+  type HistoryProfileStatus,
 } from "./api/client";
 import { mapSuggestion } from "./api/mappers";
 import { AnalyzingState } from "./components/AnalyzingState";
@@ -55,7 +57,21 @@ const useStyles = makeStyles({
     backgroundColor: "#F3F7FA",
   },
   warn: { color: "#8A4B08", marginTop: "8px" },
+  profileOk: { color: "#2F5D50", marginTop: "8px" },
+  profileBusy: { color: "#5B6B73", marginTop: "8px" },
 });
+
+function historyProfileLabel(status: HistoryProfileStatus, err: string | null): string {
+  if (status === "syncing" || status === "not_started") {
+    return "Profiel opbouwen… (analyze kan gewoon door)";
+  }
+  if (status === "failed") {
+    return err
+      ? `Profiel bijwerken mislukt: ${err}`
+      : "Profiel bijwerken mislukt — eerdere geschiedenis blijft bruikbaar.";
+  }
+  return "Mailbox-profiel klaar";
+}
 
 function newIdempotencyKey(): string {
   return `idem-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -75,7 +91,12 @@ export function App(): React.JSX.Element {
   const [pendingAction, setPendingAction] = useState<"send" | "forward">("send");
   const [recipients, setRecipients] = useState<string[]>([]);
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
+  const [historyStatus, setHistoryStatus] = useState<HistoryProfileStatus>("not_started");
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const analyzeSeq = useRef(0);
+  const historyPollRef = useRef<number | null>(null);
+  /** One history refresh per taskpane session per mailbox profile. */
+  const historyRefreshedFor = useRef<string | null>(null);
 
   const clearSuggestion = useCallback(() => {
     setSuggestion(null);
@@ -107,6 +128,52 @@ export function App(): React.JSX.Element {
       setRetrying(false);
     }
   }, [clearSuggestion]);
+
+  const stopHistoryPoll = useCallback(() => {
+    if (historyPollRef.current != null) {
+      window.clearInterval(historyPollRef.current);
+      historyPollRef.current = null;
+    }
+  }, []);
+
+  const refreshHistoryProfile = useCallback(
+    (token: string, profileId: string) => {
+      // Fire-and-forget: do not block analyze. Hub runs ≤300 bootstrap / incremental sync.
+      setHistoryStatus("syncing");
+      setHistoryError(null);
+      void syncMailboxIndex({
+        token,
+        mailboxProfileId: profileId,
+        maxMessages: 300,
+        wait: false,
+      })
+        .then((result) => {
+          setHistoryStatus(result.history_status);
+          setHistoryError(result.history_sync_error);
+          if (result.history_status === "syncing") {
+            stopHistoryPoll();
+            historyPollRef.current = window.setInterval(() => {
+              void fetchMailboxProfile({ token, mailboxProfileId: profileId })
+                .then((snap) => {
+                  setHistoryStatus(snap.history_status);
+                  setHistoryError(snap.history_sync_error);
+                  if (snap.history_status === "ready" || snap.history_status === "failed") {
+                    stopHistoryPoll();
+                  }
+                })
+                .catch(() => {
+                  /* keep last known status */
+                });
+            }, 4000);
+          }
+        })
+        .catch((err: unknown) => {
+          setHistoryStatus("failed");
+          setHistoryError(err instanceof Error ? err.message : "Sync failed");
+        });
+    },
+    [stopHistoryPoll]
+  );
 
   const ensureSession = useCallback(async (): Promise<{
     token: string;
@@ -147,23 +214,19 @@ export function App(): React.JSX.Element {
         });
         profileId = connected.id;
         setMailboxProfileId(profileId, connectEmail);
-        // Initial Sent Items crawl for grounded drafts (hub also auto-syncs if empty).
-        try {
-          await syncMailboxIndex({
-            token,
-            mailboxProfileId: profileId,
-            maxMessages: 100,
-          });
-        } catch {
-          /* analyze path will retry ensure_history_indexed */
-        }
       } catch (err) {
         setErrorMessage(err instanceof Error ? err.message : "Mailbox connect failed");
         return null;
       }
     }
+
+    // Outlook open / first session touch only — not on every analyze.
+    if (historyRefreshedFor.current !== profileId) {
+      historyRefreshedFor.current = profileId;
+      refreshHistoryProfile(token, profileId);
+    }
     return { token, profileId };
-  }, []);
+  }, [refreshHistoryProfile]);
 
   const runAnalyze = useCallback(async () => {
     const seq = ++analyzeSeq.current;
@@ -208,11 +271,19 @@ export function App(): React.JSX.Element {
   }, [checkHub]);
 
   useEffect(() => {
+    return () => stopHistoryPoll();
+  }, [stopHistoryPoll]);
+
+  useEffect(() => {
     if (state === "unavailable" || state === "checking") return;
+    // Taskpane open: connect + start history profile sync (non-blocking).
+    void ensureSession().then((session) => {
+      if (session) void runAnalyze();
+    });
     return onMailSelectionChanged(() => {
       void runAnalyze();
     });
-  }, [state, runAnalyze]);
+  }, [state, runAnalyze, ensureSession]);
 
   const onAccept = () => {
     if (!suggestion) return;
@@ -315,6 +386,20 @@ export function App(): React.JSX.Element {
   return (
     <main className={styles.root}>
       <Title3>SpoqAssist</Title3>
+
+      <Text
+        className={
+          historyStatus === "ready"
+            ? styles.profileOk
+            : historyStatus === "failed"
+              ? styles.warn
+              : styles.profileBusy
+        }
+        block
+        aria-live="polite"
+      >
+        {historyProfileLabel(historyStatus, historyError)}
+      </Text>
 
       {state === "idle" && !suggestion ? (
         <Text className={styles.meta} block>

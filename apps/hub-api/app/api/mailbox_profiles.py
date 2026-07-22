@@ -8,8 +8,8 @@ from fastapi import APIRouter
 
 from app.api.deps import AuthCtx, DbSession, MailboxContentAccess
 from app.core.errors import AppError
-from app.db.repositories import mailboxes as mailbox_repo
-from app.domain.enums import MailboxRole
+from app.db.repositories import ai_store, mailboxes as mailbox_repo
+from app.domain.enums import HistoryProfileStatus, MailboxRole
 from app.domain.schemas import (
     ConnectMailboxRequest,
     ConnectMailboxResponse,
@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/mailbox_profiles", tags=["mailbox_profiles"])
 
 
-def _to_out(profile) -> MailboxProfileOut:  # type: ignore[no-untyped-def]
+def _to_out(profile, db=None) -> MailboxProfileOut:  # type: ignore[no-untyped-def]
+    chunks = ai_store.count_chunks(db, profile.id) if db is not None else None
+    last = getattr(profile, "last_history_sync_at", None)
     return MailboxProfileOut(
         id=profile.id,
         tenant_id=profile.tenant_id,
@@ -33,6 +35,11 @@ def _to_out(profile) -> MailboxProfileOut:  # type: ignore[no-untyped-def]
         connection_status=profile.connection_status,
         connection_error=profile.connection_error,
         graph_mailbox_id=profile.graph_mailbox_id,
+        history_status=getattr(profile, "history_status", None)
+        or HistoryProfileStatus.NOT_STARTED,
+        last_history_sync_at=last.isoformat() if last else None,
+        history_sync_error=getattr(profile, "history_sync_error", None),
+        history_chunk_count=chunks,
     )
 
 
@@ -81,14 +88,14 @@ async def connect_mailbox(
         profile.id,
     )
     return ConnectMailboxResponse(
-        mailbox_profile=_to_out(profile),
+        mailbox_profile=_to_out(profile, db),
         role=MailboxRole(entitlement.role),
     )
 
 
 @router.get("/{mailbox_profile_id}", response_model=MailboxProfileOut)
-async def get_mailbox_profile(access: MailboxContentAccess) -> MailboxProfileOut:
-    return _to_out(access.profile)
+async def get_mailbox_profile(access: MailboxContentAccess, db: DbSession) -> MailboxProfileOut:
+    return _to_out(access.profile, db)
 
 
 @router.get("/{mailbox_profile_id}/content_stub", response_model=ContentStubOut)

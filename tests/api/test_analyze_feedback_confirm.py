@@ -99,12 +99,26 @@ def test_index_sync_from_sent_items(app_client, make_token):
     synced = app_client.post(
         f"/v1/mailbox_profiles/{profile_id}/index/sync",
         headers=_auth(token),
-        json={"max_messages": 10},
+        json={"max_messages": 10, "wait": True},
     )
     assert synced.status_code == 200, synced.text
     body = synced.json()
     assert body["indexed_count"] >= 1
     assert (body.get("total_chunks") or 0) >= body["indexed_count"]
+    assert body["history_status"] == "ready"
+    assert body.get("last_history_sync_at")
+
+    chunks_after_first = body["total_chunks"]
+    # Incremental second sync should not duplicate; typically indexes 0 new messages.
+    again = app_client.post(
+        f"/v1/mailbox_profiles/{profile_id}/index/sync",
+        headers=_auth(token),
+        json={"max_messages": 10, "wait": True},
+    )
+    assert again.status_code == 200, again.text
+    assert again.json()["history_status"] == "ready"
+    assert again.json()["indexed_count"] == 0
+    assert again.json()["total_chunks"] == chunks_after_first
 
     analyzed = app_client.post(
         f"/v1/mailbox_profiles/{profile_id}/analyze",
@@ -120,6 +134,36 @@ def test_index_sync_from_sent_items(app_client, make_token):
     assert analyzed.status_code == 200, analyzed.text
     assert analyzed.json()["history_status"] in {"limited", "sufficient"}
     assert analyzed.json()["draft"]
+
+
+def test_analyze_does_not_require_history_sync(app_client, make_token):
+    token = make_token(oid=OWNER_OID)
+    profile_id = _connect(app_client, token, "nosync@contoso.com", "personal")
+    analyzed = app_client.post(
+        f"/v1/mailbox_profiles/{profile_id}/analyze",
+        headers=_auth(token),
+        json={
+            "message_id": "msg-empty-history",
+            "include_draft": True,
+            "subject": "Hello",
+            "body": "Need a reply without waiting for sync",
+            "sender": "client@example.com",
+            "attachment_names": [],
+        },
+    )
+    assert analyzed.status_code == 200, analyzed.text
+    body = analyzed.json()
+    assert body["suggestion_id"]
+    # Empty index → no grounded draft, but analyze must still succeed promptly.
+    assert body["history_status"] == "none"
+    assert body.get("draft") in (None, "")
+    profile = app_client.get(
+        f"/v1/mailbox_profiles/{profile_id}",
+        headers=_auth(token),
+    )
+    assert profile.status_code == 200
+    # Analyze must not have started a Graph crawl / flipped status to syncing.
+    assert profile.json()["history_status"] in {"not_started", "ready", "failed"}
 
 
 def test_feedback_and_confirm_idempotent(app_client, make_token):

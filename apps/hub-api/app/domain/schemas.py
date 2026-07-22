@@ -6,6 +6,7 @@ from app.domain.enums import (
     Confidence,
     ConnectionStatus,
     FeedbackOutcome,
+    HistoryProfileStatus,
     HistoryStatus,
     MailboxKind,
     MailboxRole,
@@ -22,6 +23,10 @@ class MailboxProfileOut(BaseModel):
     connection_status: ConnectionStatus
     connection_error: str | None = None
     graph_mailbox_id: str | None = None
+    history_status: HistoryProfileStatus = HistoryProfileStatus.NOT_STARTED
+    last_history_sync_at: str | None = None
+    history_sync_error: str | None = None
+    history_chunk_count: int | None = None
 
 
 class ConnectMailboxRequest(BaseModel):
@@ -134,7 +139,9 @@ class IndexRequest(BaseModel):
 
 
 class SyncIndexRequest(BaseModel):
-    max_messages: int = Field(default=100, ge=1, le=300)
+    max_messages: int = Field(default=300, ge=1, le=300)
+    # False = start background sync and return immediately (Outlook open path).
+    wait: bool = True
 
 
 class IndexResponse(BaseModel):
@@ -142,6 +149,10 @@ class IndexResponse(BaseModel):
     indexed_count: int
     embedding_dim: int = 1024
     total_chunks: int | None = None
+    history_status: HistoryProfileStatus = HistoryProfileStatus.NOT_STARTED
+    last_history_sync_at: str | None = None
+    history_sync_error: str | None = None
+    started: bool = True
 
 
 class SharedAiSettingsIn(BaseModel):
