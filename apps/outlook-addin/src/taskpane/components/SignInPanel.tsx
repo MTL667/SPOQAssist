@@ -18,8 +18,12 @@ const useStyles = makeStyles({
 });
 
 function looksLikeJwt(value: string): boolean {
-  const parts = value.trim().split(".");
-  return parts.length === 3 && parts.every((p) => p.length > 0);
+  const v = value.trim();
+  if (!v || v.includes("…") || v.includes("...")) return false;
+  const parts = v.split(".");
+  if (parts.length === 3 && parts.every((p) => p.length > 8)) return true;
+  // Allow slightly messy pastes that still look like a compact JWT blob.
+  return v.startsWith("eyJ") && v.length > 80 && v.includes(".");
 }
 
 export function SignInPanel({
@@ -44,6 +48,9 @@ export function SignInPanel({
         <Text className={styles.warn} block>
           Office SSO failed: {ssoError.code}
           {ssoError.message ? ` — ${ssoError.message}` : ""}
+          {ssoError.code === "13013"
+            ? " Wait ~2–3 minutes before Retry SSO, or paste a full JWT below (three parts separated by dots)."
+            : ""}
         </Text>
       ) : (
         <Text className={styles.meta} block>

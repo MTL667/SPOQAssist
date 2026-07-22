@@ -10,6 +10,7 @@ import {
 import {
   acquireHubAccessTokenDetailed,
   clearMailboxProfileCache,
+  forceRetryOfficeSso,
   getCachedMailboxEmail,
   getMailboxProfileId,
   getOfficeUserEmail,
@@ -441,13 +442,22 @@ export function App(): React.JSX.Element {
         <SignInPanel
           ssoError={ssoError}
           onRetrySso={() => {
-            setNeedsSignIn(false);
-            void ensureSession().then((session) => {
-              if (session) void runAnalyze();
+            void forceRetryOfficeSso().then((result) => {
+              if (result.ok) {
+                setNeedsSignIn(false);
+                setSsoError(null);
+                void ensureSession().then((session) => {
+                  if (session) void runAnalyze();
+                });
+                return;
+              }
+              setNeedsSignIn(true);
+              setSsoError(result.ssoError);
             });
           }}
           onTokenReady={() => {
             setNeedsSignIn(false);
+            setSsoError(null);
             void ensureSession().then((session) => {
               if (session) void runAnalyze();
             });

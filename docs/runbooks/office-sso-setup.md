@@ -33,7 +33,8 @@ Outlook for Mac obtains an Entra access token via Office SSO and calls the SpoqA
 | 13002 | User aborted consent/sign-in | Retry SSO and accept consent |
 | 13005 | Resource / audience issue | Manifest `Resource` == hub `ENTRA_API_AUDIENCE`; App ID URI |
 | 13006 | Client / app not registered for SSO | Pre-authorize Office client; expose `access_as_user` |
-| 13007 | Invalid invalid / not consented | Admin consent for the API scope |
+| 13007 | Token invalid / not consented | Admin consent for the API scope |
+| **13013** | **SSO API throttled** | Too many `getAccessToken` calls. Wait 2–3 minutes, or paste a hub JWT. The add-in caches SSO tokens and prefers a stored sideload token to avoid this. |
 | 50001 / 9017 | Host / capability | Outlook build supports nested app auth; update Office |
 | `sso_unavailable` | `Office.auth` missing | Not running inside Outlook WebView |
 
