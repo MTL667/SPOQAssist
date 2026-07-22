@@ -21,7 +21,11 @@ export interface FeedbackControlsProps {
   onEdit: () => void;
   onReject: () => void;
   onChangeRoute: () => void;
+  onGenerateResponse?: () => void;
   showChangeRoute?: boolean;
+  showGenerateResponse?: boolean;
+  /** When true, Accept is hidden — e.g. reply path with no draft yet. */
+  hideAccept?: boolean;
 }
 
 export function FeedbackControls({
@@ -29,14 +33,28 @@ export function FeedbackControls({
   onEdit,
   onReject,
   onChangeRoute,
+  onGenerateResponse,
   showChangeRoute = true,
+  showGenerateResponse = false,
+  hideAccept = false,
 }: FeedbackControlsProps): React.JSX.Element {
   const styles = useStyles();
   return (
     <div className={styles.row}>
-      <Button className={styles.accept} onClick={onAccept}>
-        Accept
-      </Button>
+      {showGenerateResponse && onGenerateResponse ? (
+        <Button className={styles.accept} onClick={onGenerateResponse}>
+          Generate response
+        </Button>
+      ) : null}
+      {!hideAccept ? (
+        <Button
+          className={showGenerateResponse ? undefined : styles.accept}
+          appearance={showGenerateResponse ? "secondary" : undefined}
+          onClick={onAccept}
+        >
+          Accept
+        </Button>
+      ) : null}
       <Button appearance="secondary" onClick={onEdit}>
         Edit
       </Button>

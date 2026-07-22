@@ -26,14 +26,18 @@ export function SuggestionReviewStack({
   onEdit,
   onReject,
   onChangeRoute,
+  onGenerateResponse,
 }: {
   suggestion: SuggestionViewModel;
   onAccept: () => void;
   onEdit: () => void;
   onReject: () => void;
   onChangeRoute: () => void;
+  onGenerateResponse: () => void;
 }): React.JSX.Element {
   const styles = useStyles();
+  const hasDraft = Boolean(suggestion.draft);
+  const canGenerate = !hasDraft && suggestion.historyStatus !== "none";
   return (
     <section className={styles.stack} aria-label="Review suggestions">
       <Title3>Review suggestions</Title3>
@@ -54,7 +58,7 @@ export function SuggestionReviewStack({
           <Text>{suggestion.suggestedRoute.email}</Text>
         </div>
       ) : null}
-      {suggestion.draft ? (
+      {hasDraft ? (
         <div className={styles.block}>
           <Text weight="semibold">Draft</Text>
           <Text className={styles.draft}>{suggestion.draft}</Text>
@@ -63,7 +67,7 @@ export function SuggestionReviewStack({
         <Text className={styles.meta}>
           {suggestion.historyStatus === "none"
             ? "No grounded draft yet — mailbox history is still empty or syncing."
-            : "No draft generated for this message. Try Analyze again."}
+            : "No draft yet. Generate a response, or edit one yourself."}
         </Text>
       )}
       <WhyExplanation items={suggestion.why} />
@@ -72,7 +76,10 @@ export function SuggestionReviewStack({
         onEdit={onEdit}
         onReject={onReject}
         onChangeRoute={onChangeRoute}
+        onGenerateResponse={onGenerateResponse}
         showChangeRoute={Boolean(suggestion.suggestedRoute)}
+        showGenerateResponse={canGenerate}
+        hideAccept={!hasDraft && !suggestion.suggestedRoute}
       />
     </section>
   );

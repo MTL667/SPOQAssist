@@ -33,15 +33,19 @@ export function SuggestionHero({
   onEdit,
   onReject,
   onChangeRoute,
+  onGenerateResponse,
 }: {
   suggestion: SuggestionViewModel;
   onAccept: () => void;
   onEdit: () => void;
   onReject: () => void;
   onChangeRoute: () => void;
+  onGenerateResponse: () => void;
 }): React.JSX.Element {
   const styles = useStyles();
   const action = primaryActionLabel(suggestion);
+  const hasDraft = Boolean(suggestion.draft);
+  const canGenerate = !hasDraft && suggestion.historyStatus !== "none";
   return (
     <section className={styles.card} aria-label="High confidence suggestion">
       <Title3>Suggested action</Title3>
@@ -54,7 +58,12 @@ export function SuggestionHero({
           {suggestion.suggestedRoute.email})
         </Text>
       ) : null}
-      {suggestion.draft ? <Text className={styles.draft}>{suggestion.draft}</Text> : null}
+      {hasDraft ? <Text className={styles.draft}>{suggestion.draft}</Text> : null}
+      {!hasDraft && canGenerate ? (
+        <Text className={styles.meta} block>
+          No draft yet. Generate a response, or edit one yourself.
+        </Text>
+      ) : null}
       {suggestion.historyStatus === "none" || suggestion.historyStatus === "limited" ? (
         <Text className={styles.meta} block>
           Limited sent history — draft may be generic.
@@ -66,7 +75,10 @@ export function SuggestionHero({
         onEdit={onEdit}
         onReject={onReject}
         onChangeRoute={onChangeRoute}
+        onGenerateResponse={onGenerateResponse}
         showChangeRoute={Boolean(suggestion.suggestedRoute)}
+        showGenerateResponse={canGenerate}
+        hideAccept={!hasDraft && !suggestion.suggestedRoute}
       />
     </section>
   );

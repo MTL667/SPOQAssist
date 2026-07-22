@@ -495,6 +495,7 @@ export function App(): React.JSX.Element {
           }}
           onReject={() => void onReject()}
           onChangeRoute={() => setPickingRoute(true)}
+          onGenerateResponse={() => void runAnalyze()}
         />
       ) : null}
 
@@ -508,6 +509,7 @@ export function App(): React.JSX.Element {
           }}
           onReject={() => void onReject()}
           onChangeRoute={() => setPickingRoute(true)}
+          onGenerateResponse={() => void runAnalyze()}
         />
       ) : null}
 

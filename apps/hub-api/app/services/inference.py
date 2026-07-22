@@ -352,10 +352,18 @@ class OllamaInferenceClient:
                 )
                 resp.raise_for_status()
                 draft = str(resp.json().get("response") or "").strip() or None
-                return self._reject_inverted_perspective(
+                cleaned = self._reject_inverted_perspective(
                     draft,
                     mailbox_email=mailbox_email,
                     sender=sender,
+                )
+                if cleaned:
+                    return cleaned
+                logger.info("ollama_draft_empty_fallback")
+                greet = _display_name_from_email(sender) or "there"
+                return (
+                    f"Hi {greet},\n\nThanks for your message — I will look into this and follow up shortly.\n\n"
+                    "Best regards"
                 )
         except httpx.TimeoutException:
             logger.info("ollama_draft_timeout_fallback")
