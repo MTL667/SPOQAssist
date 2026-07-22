@@ -43,8 +43,8 @@ def split_thread_body(body: str) -> ThreadParts:
         if match is None:
             continue
         idx = match.start()
-        # Ignore markers in the first ~40 chars (signature noise / false positives).
-        if idx < 40:
+        # Ignore a marker at the very start of the body only.
+        if idx == 0:
             continue
         if cut is None or idx < cut:
             cut = idx

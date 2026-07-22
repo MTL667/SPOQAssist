@@ -52,6 +52,15 @@ def test_split_single_mail_no_markers():
     assert parts.thread_context == ""
 
 
+def test_split_short_latest_before_original_message():
+    body = "Beste,\n\nAl nieuws van?\n\n-----Original Message-----\nTop dank u, ook nog op haha\n"
+    parts = split_thread_body(body)
+    assert parts.split is True
+    assert "Al nieuws van?" in parts.latest_message
+    assert "Top dank u" not in parts.latest_message
+    assert "Top dank u" in parts.thread_context
+
+
 def test_analyze_draft_targets_latest_not_quoted_owner_line(app_client, make_token):
     token = make_token(oid=OWNER_OID)
     profile_id = _connect(app_client, token, "thread@contoso.com", "personal")
