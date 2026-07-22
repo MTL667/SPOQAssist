@@ -39,13 +39,27 @@ async function parseError(response: Response): Promise<string> {
 }
 
 export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
-  const response = await fetch(`${hubBaseUrl()}/health`, {
-    method: "GET",
-    signal,
-    headers: { Accept: "application/json" },
-  });
-  if (!response.ok) throw new Error(`Hub health HTTP ${response.status}`);
-  return (await response.json()) as HealthResponse;
+  // Office WebView + webpack proxy can hang forever if the LAN hub is unreachable.
+  // Bound with AbortController (widely supported) so the pane leaves "Checking…".
+  const controller = new AbortController();
+  const onCallerAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", onCallerAbort, { once: true });
+  }
+  const timer = window.setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(`${hubBaseUrl()}/health`, {
+      method: "GET",
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) throw new Error(`Hub health HTTP ${response.status}`);
+    return (await response.json()) as HealthResponse;
+  } finally {
+    window.clearTimeout(timer);
+    if (signal) signal.removeEventListener("abort", onCallerAbort);
+  }
 }
 
 export async function fetchOpsHealth(): Promise<OpsHealthDetail> {
