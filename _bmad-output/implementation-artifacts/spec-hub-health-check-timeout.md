@@ -12,7 +12,7 @@ route: 'one-shot'
 
 **Problem:** When the LAN hub/proxy is slow or briefly unreachable, `fetchHealth` had no timeout, so the Outlook taskpane stayed on “Checking SpoqAssist hub…” indefinitely.
 
-**Approach:** Abort the health `fetch` after 5 seconds with `AbortController`, so the pane shows the unavailable/retry UI instead of spinning forever.
+**Approach:** Abort the health `fetch` after 12 seconds with `AbortController`, retry once on failure, so the pane shows the unavailable/retry UI instead of spinning forever—without false negatives on a flaky Studio LAN.
 
 ## Suggested Review Order
 

@@ -47,7 +47,8 @@ export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse>
     if (signal.aborted) controller.abort();
     else signal.addEventListener("abort", onCallerAbort, { once: true });
   }
-  const timer = window.setTimeout(() => controller.abort(), 5000);
+  // LAN to Mac Studio can be flaky (several seconds); keep bound but not hair-trigger.
+  const timer = window.setTimeout(() => controller.abort(), 12000);
   try {
     const response = await fetch(`${hubBaseUrl()}/health`, {
       method: "GET",

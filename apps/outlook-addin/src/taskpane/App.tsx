@@ -109,9 +109,20 @@ export function App(): React.JSX.Element {
   const checkHub = useCallback(async () => {
     setRetrying(true);
     setUnavailableMessage(null);
-    try {
+    const attempt = async (): Promise<boolean> => {
       const health = await fetchHealth();
-      if (health.status !== "ok") {
+      return health.status === "ok";
+    };
+    try {
+      let ok = false;
+      try {
+        ok = await attempt();
+      } catch {
+        // One quick retry — Studio LAN / Docker publish is occasionally slow to answer.
+        await new Promise((r) => window.setTimeout(r, 800));
+        ok = await attempt();
+      }
+      if (!ok) {
         setState("unavailable");
         setUnavailableMessage("Hub reported an unhealthy status.");
         clearSuggestion();
@@ -121,7 +132,7 @@ export function App(): React.JSX.Element {
     } catch {
       setState("unavailable");
       setUnavailableMessage(
-        "The SpoqAssist hub cannot be reached. Check Tailscale/VPN and try again."
+        "The SpoqAssist hub cannot be reached on the LAN (Mac Studio :8000 via webpack proxy). Check the Studio is awake and Retry."
       );
       clearSuggestion();
     } finally {
