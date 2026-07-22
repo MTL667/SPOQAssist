@@ -21,9 +21,10 @@ def test_analyze_returns_suggestion_dto(app_client, make_token):
     token = make_token(oid=OWNER_OID)
     profile_id = _connect(app_client, token, "me@contoso.com", "personal")
     response = app_client.post(
-        f"/v1/mailbox_profiles/{profile_id}/messages/msg-1/analyze",
+        f"/v1/mailbox_profiles/{profile_id}/analyze",
         headers=_auth(token),
         json={
+            "message_id": "msg-1",
             "include_draft": True,
             "subject": "Urgent invoice please route",
             "body": "Please forward this invoice ASAP",
@@ -38,6 +39,34 @@ def test_analyze_returns_suggestion_dto(app_client, make_token):
     assert body["confidence"] in {"high", "medium", "low"}
     assert body["priority"]
     assert any(w["name"] == "virus.exe" for w in body["attachment_warnings"])
+    # Keyword forward/route must not invent Contoso demo recipients.
+    assert body.get("suggested_route") is None
+    assert "forward" not in (body.get("actions") or [])
+    blob = str(body).lower()
+    assert "desk@contoso.com" not in blob
+    assert "service desk" not in blob
+
+
+def test_analyze_meeting_no_invented_route(app_client, make_token):
+    token = make_token(oid=OWNER_OID)
+    profile_id = _connect(app_client, token, "meet@contoso.com", "personal")
+    response = app_client.post(
+        f"/v1/mailbox_profiles/{profile_id}/analyze",
+        headers=_auth(token),
+        json={
+            "message_id": "msg-meet",
+            "include_draft": False,
+            "subject": "Call next week?",
+            "body": "Can we schedule a meeting to discuss?",
+            "sender": "sales@example.com",
+            "attachment_names": [],
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["category"] == "meeting"
+    assert body.get("suggested_route") is None
+    assert "forward" not in (body.get("actions") or [])
 
 
 def test_index_and_retrieve_scoped(app_client, make_token):
@@ -64,13 +93,43 @@ def test_index_and_retrieve_scoped(app_client, make_token):
     assert b  # connected
 
 
+def test_index_sync_from_sent_items(app_client, make_token):
+    token = make_token(oid=OWNER_OID)
+    profile_id = _connect(app_client, token, "history@contoso.com", "personal")
+    synced = app_client.post(
+        f"/v1/mailbox_profiles/{profile_id}/index/sync",
+        headers=_auth(token),
+        json={"max_messages": 10},
+    )
+    assert synced.status_code == 200, synced.text
+    body = synced.json()
+    assert body["indexed_count"] >= 1
+    assert (body.get("total_chunks") or 0) >= body["indexed_count"]
+
+    analyzed = app_client.post(
+        f"/v1/mailbox_profiles/{profile_id}/analyze",
+        headers=_auth(token),
+        json={
+            "message_id": "msg-after-sync",
+            "subject": "invoice question",
+            "body": "Can you help with this invoice?",
+            "sender": "vendor@example.com",
+            "attachment_names": [],
+        },
+    )
+    assert analyzed.status_code == 200, analyzed.text
+    assert analyzed.json()["history_status"] in {"limited", "sufficient"}
+    assert analyzed.json()["draft"]
+
+
 def test_feedback_and_confirm_idempotent(app_client, make_token):
     token = make_token(oid=OWNER_OID)
     profile_id = _connect(app_client, token, "send@contoso.com", "personal")
     analyzed = app_client.post(
-        f"/v1/mailbox_profiles/{profile_id}/messages/msg-2/analyze",
+        f"/v1/mailbox_profiles/{profile_id}/analyze",
         headers=_auth(token),
         json={
+            "message_id": "msg-2",
             "subject": "Hello",
             "body": "Need a reply",
             "sender": "client@example.com",
@@ -140,9 +199,10 @@ def test_shared_learning_cycle(app_client, make_token):
 
     delegate = make_token(oid=OTHER_OID)
     first = app_client.post(
-        f"/v1/mailbox_profiles/{profile_id}/messages/m-learn/analyze",
+        f"/v1/mailbox_profiles/{profile_id}/analyze",
         headers=_auth(delegate),
         json={
+            "message_id": "m-learn",
             "subject": "Please help",
             "body": "Question",
             "sender": "pattern@vendor.com",
@@ -156,7 +216,7 @@ def test_shared_learning_cycle(app_client, make_token):
         json={
             "suggestion_id": suggestion_id,
             "outcome": "reroute",
-            "corrected_route_email": "finance@contoso.com",
+            "corrected_route_email": "finance@example.com",
             "corrected_route_name": "Finance",
             "teach": True,
         },
@@ -164,9 +224,10 @@ def test_shared_learning_cycle(app_client, make_token):
     assert reroute.status_code == 200
 
     second = app_client.post(
-        f"/v1/mailbox_profiles/{profile_id}/messages/m-learn-2/analyze",
+        f"/v1/mailbox_profiles/{profile_id}/analyze",
         headers=_auth(delegate),
         json={
+            "message_id": "m-learn-2",
             "subject": "Another",
             "body": "Follow up",
             "sender": "pattern@vendor.com",
@@ -176,7 +237,9 @@ def test_shared_learning_cycle(app_client, make_token):
     assert second.status_code == 200
     route = second.json()["suggested_route"]
     assert route is not None
-    assert route["email"] == "finance@contoso.com"
+    assert route["email"] == "finance@example.com"
+    assert "forward" in (second.json().get("actions") or [])
+    assert "contoso.com" not in str(second.json()).lower()
 
 
 def test_admin_shared_settings_ok_personal_denied(app_client, make_token):
@@ -219,9 +282,9 @@ def test_admin_shared_settings_ok_personal_denied(app_client, make_token):
     assert denied_settings.status_code == 403
 
     denied_content = app_client.post(
-        f"/v1/mailbox_profiles/{personal}/messages/x/analyze",
+        f"/v1/mailbox_profiles/{personal}/analyze",
         headers=_auth(admin),
-        json={"subject": "x", "body": "y", "sender": "z"},
+        json={"message_id": "x", "subject": "x", "body": "y", "sender": "z"},
     )
     assert denied_content.status_code == 403
 
@@ -281,9 +344,9 @@ def test_idempotency_conflict_on_payload_mismatch(app_client, make_token):
     token = make_token(oid=OWNER_OID)
     profile_id = _connect(app_client, token, "idem@contoso.com", "personal")
     analyzed = app_client.post(
-        f"/v1/mailbox_profiles/{profile_id}/messages/msg-idem/analyze",
+        f"/v1/mailbox_profiles/{profile_id}/analyze",
         headers=_auth(token),
-        json={"subject": "Hi", "body": "Body", "sender": "a@b.com"},
+        json={"message_id": "msg-idem", "subject": "Hi", "body": "Body", "sender": "a@b.com"},
     )
     suggestion_id = analyzed.json()["suggestion_id"]
     key = "idem-conflict-key-01"
@@ -337,8 +400,8 @@ def test_shared_ai_disabled_blocks_analyze(app_client, make_token):
         json={"enabled": False, "auto_analyze": False, "notes": ""},
     )
     blocked = app_client.post(
-        f"/v1/mailbox_profiles/{shared}/messages/x/analyze",
+        f"/v1/mailbox_profiles/{shared}/analyze",
         headers=_auth(owner),
-        json={"subject": "x", "body": "y", "sender": "z@z.com"},
+        json={"message_id": "x", "subject": "x", "body": "y", "sender": "z@z.com"},
     )
     assert blocked.status_code == 403

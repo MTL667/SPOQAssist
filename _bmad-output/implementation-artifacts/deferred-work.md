@@ -1,5 +1,13 @@
 # Deferred work
 
+## Deferred from: spec-real-intent-routing-and-drafts (2026-07-22)
+
+- Live Ollama-mode integration tests for meeting/no-route (CI uses stub; classify path is shared)
+- Architecture doc still mentions legacy `/messages/{id}/analyze` path — update when docs pass runs
+- Embed/draft timeout budgets vs architecture NFR numbers (pre-existing pilot tuning)
+- RoutePicker listbox a11y roles/keyboard — polish later
+- Prompt-injection hardening for instruct drafts — broader inference security pass
+
 ## Deferred from: code review of epics.md (2026-07-22)
 
 - Embeddings stored as JSON text, not Postgres `vector(1024)` — pilot/sqlite compatibility

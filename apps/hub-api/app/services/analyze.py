@@ -118,10 +118,17 @@ def run_analyze(
         subject=loaded.subject,
         body=loaded.body,
         sender=loaded.sender,
+        mailbox_email=mailbox_email,
         retrieved_snippets=snippets,
         learned_route=learned,
         include_draft=body.include_draft,
     )
+
+    route_email = signals.route_email
+    route_name = signals.route_name
+    # Frozen product rule: Contoso never surfaces as a suggested route to the add-in.
+    if route_email and "@contoso.com" in route_email.lower():
+        route_email, route_name = None, None
 
     suggestion = Suggestion(
         mailbox_profile_id=mailbox_profile_id,
@@ -130,8 +137,8 @@ def run_analyze(
         category=signals.category,
         priority=signals.priority,
         confidence=signals.confidence.value,
-        suggested_route_email=signals.route_email,
-        suggested_route_name=signals.route_name,
+        suggested_route_email=route_email,
+        suggested_route_name=route_name,
         draft=signals.draft,
         why_json=json.dumps(signals.why),
         history_status=signals.history_status.value,
@@ -149,7 +156,10 @@ def run_analyze(
             display_name=suggestion.suggested_route_name,
         )
 
-    actions = ["reply"] if suggestion.draft else []
+    # Forward only when a real route exists (learned edge) — never invented recipients.
+    actions: list[str] = []
+    if suggestion.draft:
+        actions.append("reply")
     if route:
         actions.append("forward")
 
