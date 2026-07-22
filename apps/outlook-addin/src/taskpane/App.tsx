@@ -109,6 +109,8 @@ export function App(): React.JSX.Element {
   const historyPollRef = useRef<number | null>(null);
   /** One history refresh per taskpane session per mailbox profile. */
   const historyRefreshedFor = useRef<string | null>(null);
+  /** Prevent re-analyze when pane state flips (analyzing → ready would otherwise loop). */
+  const didInitialAnalyze = useRef(false);
 
   const clearSuggestion = useCallback(() => {
     setSuggestion(null);
@@ -313,10 +315,14 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     if (state === "unavailable" || state === "checking") return;
-    // Taskpane open: connect + start history profile sync (non-blocking).
-    void ensureSession().then((session) => {
-      if (session) void runAnalyze();
-    });
+    // One-shot bootstrap when hub becomes available — do NOT depend on later
+    // pane states (ready_*/analyzing) or every completed analyze restarts.
+    if (!didInitialAnalyze.current) {
+      didInitialAnalyze.current = true;
+      void ensureSession().then((session) => {
+        if (session) void runAnalyze();
+      });
+    }
     return onMailSelectionChanged(() => {
       void runAnalyze();
     });
