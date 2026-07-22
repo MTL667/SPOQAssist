@@ -31,6 +31,14 @@ class ThreadParts:
     split: bool
 
 
+def draft_context_blocks(body: str) -> tuple[str, str]:
+    """Return (latest_to_answer, full_body_as_context) for draft prompts."""
+    parts = split_thread_body(body)
+    latest = (parts.latest_message or "").strip()
+    full = (body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    return latest, full
+
+
 def split_thread_body(body: str) -> ThreadParts:
     """Return latest inbound text + remaining quoted/history context."""
     text = (body or "").replace("\r\n", "\n").replace("\r", "\n").strip()

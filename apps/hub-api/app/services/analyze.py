@@ -108,8 +108,11 @@ def run_analyze(
     from app.services.thread_split import split_thread_body
 
     parts = split_thread_body(loaded.body)
-    # Retrieve against the latest ask — avoid pulling style matches from quoted history.
-    query = f"{loaded.subject}\n{parts.latest_message}\n{loaded.sender}"
+    # Weight the latest ask first; include a short thread slice for topic background.
+    thread_tail = (parts.thread_context or "")[:800]
+    query = (
+        f"{loaded.subject}\n{parts.latest_message}\n{loaded.sender}\n{thread_tail}"
+    )
     snippets = retrieve_similar(
         db, mailbox_profile_id=mailbox_profile_id, query_text=query, client=client
     )

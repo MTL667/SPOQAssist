@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.services.thread_split import split_thread_body
+from app.services.thread_split import draft_context_blocks, split_thread_body
 from tests.conftest import OWNER_OID
 
 
@@ -59,6 +59,16 @@ def test_split_short_latest_before_original_message():
     assert "Al nieuws van?" in parts.latest_message
     assert "Top dank u" not in parts.latest_message
     assert "Top dank u" in parts.thread_context
+
+
+def test_draft_context_keeps_full_body_and_distinct_latest():
+    latest, full = draft_context_blocks(THREAD_FIXTURE)
+    assert "Al nieuws van?" in latest
+    assert "Top dank u" not in latest
+    # Full mail remains available as context (including older lines).
+    assert full == THREAD_FIXTURE.strip() or full.startswith("Beste,")
+    assert "Top dank u, ook nog op haha" in full
+    assert "Al nieuws van?" in full
 
 
 def test_analyze_draft_targets_latest_not_quoted_owner_line(app_client, make_token):

@@ -13,7 +13,7 @@ import httpx
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.domain.enums import Confidence, HistoryStatus
-from app.services.thread_split import split_thread_body
+from app.services.thread_split import draft_context_blocks, split_thread_body
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +195,7 @@ class StubInferenceClient:
                     why.append(
                         {
                             "code": "thread_latest",
-                            "text": "Draft targets the latest message; quoted thread used as context only.",
+                            "text": "Draft answers the latest message; full mail thread used as context only.",
                         }
                     )
                 if behavior_summary and behavior_summary.strip():
@@ -361,8 +361,14 @@ class OllamaInferenceClient:
         counterpart = sender or "the other person"
         counterpart_name = _display_name_from_email(sender) or counterpart
         parts = split_thread_body(body)
-        latest = parts.latest_message[:1500]
-        thread_ctx = parts.thread_context[:2000] if parts.thread_context else "(none)"
+        latest_raw, full_raw = draft_context_blocks(body)
+        latest = latest_raw[:2000]
+        # Full original body as context (not only the quoted slice after the split).
+        full_thread = full_raw
+        if len(full_thread) > 8000:
+            full_thread = full_thread[:8000] + "\n…[truncated]"
+        if not full_thread:
+            full_thread = "(none)"
         style = " --- ".join(s[:250] for s in snippets[:3]) or "(none)"
         profile_block = (behavior_summary or "").strip() or "(none cached)"
         if category == "meeting":
@@ -382,20 +388,23 @@ class OllamaInferenceClient:
             )
         else:
             intent_block = (
-                "Intent: normal REPLY. Answer the LATEST message only; "
-                "use thread context for background, not as text to repeat."
+                "Intent: normal REPLY. Answer ONLY the LATEST message. "
+                "Use the full mail thread as background context (topic, prior facts); "
+                "do not answer older messages and do not repeat prior replies."
             )
         prompt = (
             "You draft an email REPLY that the mailbox owner will send.\n"
             f"Author of the reply (mailbox owner / YOU): {owner_name} <{owner}>\n"
             f"Incoming mail FROM (the person you reply TO): {counterpart_name} <{counterpart}>\n"
-            f"Subject: {subject[:200]}\n"
-            f"LATEST message to answer (primary):\n{latest}\n\n"
-            f"Earlier thread context (background only — do NOT quote or reuse as your reply):\n"
-            f"{thread_ctx}\n\n"
+            f"Subject: {subject[:200]}\n\n"
+            "=== LATEST message to answer (ONLY answer this) ===\n"
+            f"{latest or '(empty)'}\n\n"
+            "=== Full mail thread (CONTEXT ONLY — understand topic/history; "
+            "do NOT answer older parts; do NOT copy prior replies) ===\n"
+            f"{full_thread}\n\n"
             f"{intent_block}\n\n"
             "Mailbox owner prompt (cached behavior profile — follow tone/habits; "
-            "do not invent facts beyond this and the latest message):\n"
+            "do not invent facts beyond the latest message + thread context):\n"
             f"{profile_block[:2000]}\n\n"
             "Style examples from the mailbox owner's previously SENT mail "
             "(match tone/length only; NEVER copy their wording verbatim):\n"
@@ -403,8 +412,8 @@ class OllamaInferenceClient:
             "Hard rules:\n"
             f"1) Write ONLY as {owner_name} ({owner}).\n"
             f"2) Address {counterpart_name} ({counterpart}) — never greet or address {owner_name}.\n"
-            "3) Answer ONLY the LATEST message; thread context is background.\n"
-            "4) Never paste or lightly rewrite a prior reply already present in the thread.\n"
+            "3) Answer ONLY the LATEST message block above.\n"
+            "4) Use the full mail thread only as context (who/what/why); never paste prior replies from it.\n"
             "5) Never write from the incoming sender's perspective; never sign as them.\n"
             "6) Do not invent facts, attachments, recipients, or commitments.\n"
             "7) Match the language of the LATEST message (e.g. Dutch if Dutch).\n"
@@ -427,7 +436,8 @@ class OllamaInferenceClient:
                         "options": {
                             "temperature": 0.3,
                             "num_predict": 280,
-                            "num_ctx": 4096,
+                            # Room for full-thread context + latest + profile.
+                            "num_ctx": 8192,
                         },
                     },
                 )
@@ -440,7 +450,8 @@ class OllamaInferenceClient:
                 )
                 cleaned = self._reject_thread_parrot(
                     cleaned,
-                    thread_context=parts.thread_context,
+                    # Parrot check against quoted history + style, not the latest ask.
+                    thread_context=parts.thread_context or "",
                     style_snippets=snippets,
                 )
                 if cleaned:
