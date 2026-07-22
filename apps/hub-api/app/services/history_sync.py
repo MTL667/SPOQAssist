@@ -145,6 +145,20 @@ def sync_sent_history(
             )
         db.refresh(profile)
         _mark_ready(db, profile)
+        try:
+            # Fast grounded refresh only — never block sync on a 14B summary call.
+            from app.services.profile_inspect import ensure_cached_summary
+
+            ensure_cached_summary(db, profile, allow_llm=False)
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            logger.info(
+                "behavior_summary_refresh_after_sync_skipped mailbox_profile_id=%s",
+                mailbox_profile_id,
+            )
         logger.info(
             "history_sync_done mailbox_profile_id=%s indexed=%s mode=%s",
             mailbox_profile_id,

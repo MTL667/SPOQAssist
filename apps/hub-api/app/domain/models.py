@@ -36,6 +36,11 @@ class MailboxProfile(Base):
     last_history_sync_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Cached persona / behavior prompt for draft generation (not LoRA).
+    behavior_summary_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    behavior_summary_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow

@@ -14,6 +14,8 @@ _HISTORY_COLUMNS: dict[str, str] = {
     "history_sync_error": "VARCHAR(512)",
     "history_sync_started_at": "TIMESTAMP WITH TIME ZONE",
     "last_history_sync_at": "TIMESTAMP WITH TIME ZONE",
+    "behavior_summary_text": "TEXT",
+    "behavior_summary_updated_at": "TIMESTAMP WITH TIME ZONE",
 }
 
 

@@ -1,9 +1,10 @@
-"""Mailbox profile inspector — metadata, routes, hub-side behavior summary."""
+"""Mailbox profile inspector — metadata, routes, hub-side behavior summary cache."""
 
 from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -26,16 +27,13 @@ _DUTCH_HINTS = re.compile(
 )
 
 
-def build_profile_inspect(
-    db: Session,
-    profile: MailboxProfile,
-    *,
-    include_summary: bool = True,
-) -> ProfileInspectOut:
-    chunk_count = int(ai_store.count_chunks(db, profile.id) or 0)
-    indexed_messages = int(ai_store.count_indexed_messages(db, profile.id) or 0)
-    edges = learning.list_routing_edges(db, profile.id, limit=100)
-    routes = []
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _routes_for_profile(db: Session, profile_id: str) -> list[LearnedRouteOut]:
+    edges = learning.list_routing_edges(db, profile_id, limit=100)
+    routes: list[LearnedRouteOut] = []
     for e in edges:
         try:
             weight = float(e.weight) if e.weight is not None else 1.0
@@ -49,30 +47,14 @@ def build_profile_inspect(
                 weight=weight,
             )
         )
-    last = getattr(profile, "last_history_sync_at", None)
-    summary = BehaviorSummaryOut(status="skipped", text=None)
-    if include_summary:
-        summary = _behavior_summary(
-            profile=profile,
-            chunk_count=chunk_count,
-            routes=routes,
-            samples=ai_store.sample_chunk_texts(db, profile.id, limit=8),
-        )
-    return ProfileInspectOut(
-        id=profile.id,
-        email=profile.email,
-        kind=profile.kind,
-        connection_status=profile.connection_status,
-        connection_error=profile.connection_error,
-        history_status=getattr(profile, "history_status", None)
-        or HistoryProfileStatus.NOT_STARTED,
-        last_history_sync_at=last.isoformat() if last else None,
-        history_sync_error=getattr(profile, "history_sync_error", None),
-        history_chunk_count=chunk_count,
-        indexed_message_count=indexed_messages,
-        routes=routes,
-        behavior_summary=summary,
-    )
+    return routes
+
+
+def persist_behavior_summary(db: Session, profile: MailboxProfile, text: str) -> None:
+    profile.behavior_summary_text = (text or "").strip() or None
+    profile.behavior_summary_updated_at = _utcnow() if profile.behavior_summary_text else None
+    db.commit()
+    db.refresh(profile)
 
 
 def grounded_behavior_summary(
@@ -123,7 +105,98 @@ def grounded_behavior_summary(
     )
 
 
-def _behavior_summary(
+def ensure_cached_summary(
+    db: Session,
+    profile: MailboxProfile,
+    *,
+    allow_llm: bool = False,
+) -> str | None:
+    """Return cached summary; if missing and history exists, fill grounded (or LLM if allowed)."""
+    cached = (getattr(profile, "behavior_summary_text", None) or "").strip()
+    if cached:
+        return cached
+
+    chunk_count = int(ai_store.count_chunks(db, profile.id) or 0)
+    routes = _routes_for_profile(db, profile.id)
+    if chunk_count == 0 and not routes:
+        return None
+
+    samples = ai_store.sample_chunk_texts(db, profile.id, limit=8) if chunk_count else []
+    if allow_llm and chunk_count > 0:
+        summary = _compute_behavior_summary(
+            profile=profile,
+            chunk_count=chunk_count,
+            routes=routes,
+            samples=samples,
+        )
+        text = (summary.text or "").strip() if summary.status == "ok" else ""
+    else:
+        text = grounded_behavior_summary(
+            mailbox_email=profile.email,
+            kind=str(profile.kind),
+            chunk_count=chunk_count,
+            routes=routes,
+            samples=samples,
+        )
+    if text:
+        persist_behavior_summary(db, profile, text)
+        return text
+    return None
+
+
+def refresh_behavior_summary(db: Session, profile: MailboxProfile) -> BehaviorSummaryOut:
+    """Recompute summary (LLM preferred) and persist when ok/empty-with-routes."""
+    chunk_count = int(ai_store.count_chunks(db, profile.id) or 0)
+    routes = _routes_for_profile(db, profile.id)
+    samples = ai_store.sample_chunk_texts(db, profile.id, limit=8) if chunk_count else []
+    summary = _compute_behavior_summary(
+        profile=profile,
+        chunk_count=chunk_count,
+        routes=routes,
+        samples=samples,
+    )
+    if summary.status == "ok" and (summary.text or "").strip():
+        persist_behavior_summary(db, profile, summary.text or "")
+    elif summary.status == "empty":
+        persist_behavior_summary(db, profile, "")
+    return summary
+
+
+def build_profile_inspect(
+    db: Session,
+    profile: MailboxProfile,
+    *,
+    include_summary: bool = True,
+) -> ProfileInspectOut:
+    chunk_count = int(ai_store.count_chunks(db, profile.id) or 0)
+    indexed_messages = int(ai_store.count_indexed_messages(db, profile.id) or 0)
+    routes = _routes_for_profile(db, profile.id)
+    last = getattr(profile, "last_history_sync_at", None)
+    summary = BehaviorSummaryOut(status="skipped", text=None)
+    if include_summary:
+        summary = refresh_behavior_summary(db, profile)
+        # Prefer freshly persisted cache for display consistency.
+        cached = (getattr(profile, "behavior_summary_text", None) or "").strip()
+        if cached and summary.status == "ok":
+            summary = BehaviorSummaryOut(status="ok", text=cached, error=None)
+    return ProfileInspectOut(
+        id=profile.id,
+        email=profile.email,
+        kind=profile.kind,
+        connection_status=profile.connection_status,
+        connection_error=profile.connection_error,
+        history_status=getattr(profile, "history_status", None)
+        or HistoryProfileStatus.NOT_STARTED,
+        last_history_sync_at=last.isoformat() if last else None,
+        history_sync_error=getattr(profile, "history_sync_error", None),
+        history_chunk_count=chunk_count,
+        indexed_message_count=indexed_messages,
+        routes=routes,
+        behavior_summary=summary,
+    )
+
+
+def _compute_behavior_summary(
     *,
     profile: MailboxProfile,
     chunk_count: int,
@@ -139,7 +212,6 @@ def _behavior_summary(
             ),
         )
     if chunk_count == 0 and routes:
-        # Routes alone — no style invented from missing Sent history.
         text = grounded_behavior_summary(
             mailbox_email=profile.email,
             kind=str(profile.kind),

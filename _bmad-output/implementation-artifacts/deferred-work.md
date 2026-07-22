@@ -1,5 +1,11 @@
 # Deferred work
 
+## Deferred from: spec-use-cached-behavior-summary-in-drafts (2026-07-22)
+
+- Invalidate/refresh cached summary when indexed chunk count changes materially (stale cache)
+- Concurrent ensure_cached_summary locking / for-update
+- Assert Ollama prompt contains summary text (CI uses stub marker today)
+
 ## Deferred from: spec-fix-behavior-summary-qwen-think (2026-07-22)
 
 - Optional `behavior_summary.status=degraded` + UI hint when using grounded fallback (fix spec chose usable `ok`)

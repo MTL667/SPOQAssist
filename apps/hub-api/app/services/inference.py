@@ -57,6 +57,7 @@ class InferenceClient(Protocol):
         retrieved_snippets: list[str],
         learned_route: tuple[str, str | None] | None,
         include_draft: bool,
+        behavior_summary: str | None = None,
     ) -> AnalyzeSignals: ...
 
     def summarize_mailbox_behavior(
@@ -110,6 +111,7 @@ class StubInferenceClient:
         retrieved_snippets: list[str],
         learned_route: tuple[str, str | None] | None,
         include_draft: bool,
+        behavior_summary: str | None = None,
     ) -> AnalyzeSignals:
         del mailbox_email
         text = f"{subject} {body} {sender}".lower()
@@ -183,6 +185,15 @@ class StubInferenceClient:
                     f"Hi {greet},\n\nThanks for your message regarding “{subject[:80]}”. "
                     "I will follow up shortly.\n\nBest regards"
                 )
+                if behavior_summary and behavior_summary.strip():
+                    # Testable marker that draft path consumed the cached profile prompt.
+                    draft += "\n\n[mailbox-profile-applied]"
+                    why.append(
+                        {
+                            "code": "mailbox_profile",
+                            "text": "Draft guided by cached mailbox behavior summary.",
+                        }
+                    )
 
         return AnalyzeSignals(
             category=category,
@@ -280,6 +291,7 @@ class OllamaInferenceClient:
         retrieved_snippets: list[str],
         learned_route: tuple[str, str | None] | None,
         include_draft: bool,
+        behavior_summary: str | None = None,
     ) -> AnalyzeSignals:
         # Fast path: heuristic + retrieved/learned context; draft via instruct when needed.
         # Never send mailbox content to external LLM APIs — only local Ollama.
@@ -291,6 +303,7 @@ class OllamaInferenceClient:
             retrieved_snippets=retrieved_snippets,
             learned_route=learned_route,
             include_draft=False,
+            behavior_summary=behavior_summary,
         )
         draft = None
         if include_draft and stub.history_status != HistoryStatus.NONE:
@@ -302,8 +315,16 @@ class OllamaInferenceClient:
                 snippets=retrieved_snippets,
                 category=stub.category,
                 route_email=stub.route_email,
+                behavior_summary=behavior_summary,
             )
             stub.draft = draft
+            if behavior_summary and behavior_summary.strip():
+                stub.why.append(
+                    {
+                        "code": "mailbox_profile",
+                        "text": "Draft guided by cached mailbox behavior summary.",
+                    }
+                )
         elif include_draft:
             stub.draft = None
         # Touch rerank model name for ops visibility (ranking applied via retrieve order).
@@ -320,12 +341,14 @@ class OllamaInferenceClient:
         snippets: list[str],
         category: str,
         route_email: str | None,
+        behavior_summary: str | None = None,
     ) -> str | None:
         owner = mailbox_email or "the mailbox owner"
         owner_name = _display_name_from_email(mailbox_email) or owner
         counterpart = sender or "the other person"
         counterpart_name = _display_name_from_email(sender) or counterpart
         style = " --- ".join(s[:250] for s in snippets[:3]) or "(none)"
+        profile_block = (behavior_summary or "").strip() or "(none cached)"
         if category == "meeting":
             intent_block = (
                 "Intent: MEETING/CALL follow-up. Propose next steps or ask for times. "
@@ -350,6 +373,9 @@ class OllamaInferenceClient:
             f"Subject: {subject[:200]}\n"
             f"Incoming message:\n{body[:1500]}\n\n"
             f"{intent_block}\n\n"
+            "Mailbox owner prompt (cached behavior profile — follow tone/habits; "
+            "do not invent facts beyond this and the incoming mail):\n"
+            f"{profile_block[:2000]}\n\n"
             "Style examples from the mailbox owner's previously SENT mail "
             "(match tone only; do not reuse as if you are that other person):\n"
             f"{style}\n\n"
@@ -359,7 +385,8 @@ class OllamaInferenceClient:
             "3) Never write from the incoming sender's perspective; never sign as them.\n"
             "4) Do not invent facts, attachments, recipients, or commitments.\n"
             "5) Match the language of the incoming message (e.g. Dutch if Dutch).\n"
-            "6) Output only the reply body, no preamble.\n\n"
+            "6) Prefer the mailbox owner prompt for tone/habits when it conflicts with generic style.\n"
+            "7) Output only the reply body, no preamble.\n\n"
             "Reply:\n"
         )
         try:

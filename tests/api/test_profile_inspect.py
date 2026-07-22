@@ -161,3 +161,106 @@ def test_inspect_summary_model_down_uses_grounded_fallback(
     assert "failsum@contoso.com" in text
     assert "mostly Dutch" in text
     assert "unavailable" not in text.lower()
+
+
+def test_draft_fills_grounded_cache_when_empty(app_client, make_token):
+    token = make_token(oid=OWNER_OID)
+    profile_id = _connect(app_client, token, "autofill@contoso.com", "personal")
+    indexed = app_client.post(
+        f"/v1/mailbox_profiles/{profile_id}/index",
+        headers=_auth(token),
+        json={
+            "items": [
+                {
+                    "message_id": "sent-auto-1",
+                    "text": "Subject: hi\nHallo, bedankt — ik kijk dit graag na.\nGroeten",
+                }
+            ]
+        },
+    )
+    assert indexed.status_code == 200, indexed.text
+
+    analyze = app_client.post(
+        f"/v1/mailbox_profiles/{profile_id}/analyze",
+        headers=_auth(token),
+        json={
+            "message_id": "msg-auto-draft",
+            "include_draft": True,
+            "subject": "Ping",
+            "body": "Any update?",
+            "sender": "peer@example.com",
+        },
+    )
+    assert analyze.status_code == 200, analyze.text
+    assert "[mailbox-profile-applied]" in (analyze.json().get("draft") or "")
+
+    from app.db.repositories import mailboxes as mailbox_repo
+    from app.db.session import get_engine
+    from sqlalchemy.orm import Session
+
+    with Session(get_engine()) as db:
+        profile = mailbox_repo.get_profile(db, profile_id)
+        assert profile is not None
+        assert "autofill@contoso.com" in (profile.behavior_summary_text or "")
+
+
+def test_inspect_persists_summary_and_draft_uses_cache(app_client, make_token):
+    token = make_token(oid=OWNER_OID)
+    profile_id = _connect(app_client, token, "cacheme@contoso.com", "personal")
+    indexed = app_client.post(
+        f"/v1/mailbox_profiles/{profile_id}/index",
+        headers=_auth(token),
+        json={
+            "items": [
+                {
+                    "message_id": "sent-cache-1",
+                    "text": "Subject: ok\nHallo, bedankt voor je mail. Ik volg dit graag op.\nGroeten",
+                },
+                {
+                    "message_id": "sent-cache-2",
+                    "text": "Subject: re\nBeste, bijlage volgt. Met vriendelijke groeten",
+                },
+            ]
+        },
+    )
+    assert indexed.status_code == 200, indexed.text
+
+    inspect = app_client.get(
+        f"/v1/mailbox_profiles/{profile_id}/inspect",
+        headers=_auth(token),
+    )
+    assert inspect.status_code == 200, inspect.text
+    assert inspect.json()["behavior_summary"]["status"] == "ok"
+
+    from app.db.repositories import mailboxes as mailbox_repo
+    from app.db.session import get_engine
+    from sqlalchemy.orm import Session
+
+    with Session(get_engine()) as db:
+        profile = mailbox_repo.get_profile(db, profile_id)
+        assert profile is not None
+        assert (profile.behavior_summary_text or "").strip()
+        profile.behavior_summary_text = (
+            "Mailbox: cacheme@contoso.com (personal)\n"
+            "Style: UNIQUE_PROFILE_TOKEN short Dutch replies.\n"
+            "Routing:\n- (none learned yet)\n"
+            "History: 2 Sent chunks indexed."
+        )
+        db.commit()
+
+    analyze = app_client.post(
+        f"/v1/mailbox_profiles/{profile_id}/analyze",
+        headers=_auth(token),
+        json={
+            "message_id": "msg-cache-draft",
+            "include_draft": True,
+            "subject": "Quick ask",
+            "body": "Can you confirm?",
+            "sender": "peer@example.com",
+        },
+    )
+    assert analyze.status_code == 200, analyze.text
+    body = analyze.json()
+    assert body.get("draft")
+    assert "[mailbox-profile-applied]" in body["draft"]
+    assert any(w.get("code") == "mailbox_profile" for w in body.get("why") or [])

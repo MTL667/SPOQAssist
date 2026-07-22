@@ -114,6 +114,26 @@ def run_analyze(
         mailbox_profile_id=mailbox_profile_id,
         pattern_key=pattern_key_from_sender(loaded.sender),
     )
+    behavior_summary = None
+    if body.include_draft:
+        from app.db.repositories import mailboxes as mailbox_repo
+        from app.services.profile_inspect import ensure_cached_summary
+
+        try:
+            profile = mailbox_repo.get_profile(db, mailbox_profile_id)
+            if profile is not None:
+                # Grounded fill only — never a per-draft 14B summary regeneration.
+                behavior_summary = ensure_cached_summary(db, profile, allow_llm=False)
+        except Exception:
+            logger.info(
+                "behavior_summary_ensure_skipped mailbox_profile_id=%s",
+                mailbox_profile_id,
+            )
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            behavior_summary = None
     signals = client.analyze_fast(
         subject=loaded.subject,
         body=loaded.body,
@@ -122,6 +142,7 @@ def run_analyze(
         retrieved_snippets=snippets,
         learned_route=learned,
         include_draft=body.include_draft,
+        behavior_summary=behavior_summary,
     )
 
     route_email = signals.route_email
