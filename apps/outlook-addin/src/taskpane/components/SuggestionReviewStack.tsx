@@ -60,7 +60,11 @@ export function SuggestionReviewStack({
           <Text className={styles.draft}>{suggestion.draft}</Text>
         </div>
       ) : (
-        <Text className={styles.meta}>No grounded draft (insufficient history).</Text>
+        <Text className={styles.meta}>
+          {suggestion.historyStatus === "none"
+            ? "No grounded draft yet — mailbox history is still empty or syncing."
+            : "No draft generated for this message. Try Analyze again."}
+        </Text>
       )}
       <WhyExplanation items={suggestion.why} />
       <FeedbackControls

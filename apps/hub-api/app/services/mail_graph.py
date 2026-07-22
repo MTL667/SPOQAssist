@@ -101,6 +101,17 @@ class MailGraphClient(Protocol):
         graph_mailbox_id: str | None,
     ) -> GraphSendResult: ...
 
+    def list_sent_messages(
+        self,
+        *,
+        user_assertion: str,
+        tenant_id: str,
+        mailbox_kind: MailboxKind,
+        mailbox_email: str,
+        graph_mailbox_id: str | None,
+        max_messages: int = 100,
+    ) -> list[GraphMessage]: ...
+
 
 class StubMailGraphClient:
     """Dev/test connector — no network; never stores client-side secrets."""
@@ -200,6 +211,45 @@ class StubMailGraphClient:
             {"message_id": message_id, "recipients": recipients, "comment": comment}
         )
         return GraphSendResult(graph_message_id=f"fwd-{len(self.forward_calls)}")
+
+    def list_sent_messages(
+        self,
+        *,
+        user_assertion: str,
+        tenant_id: str,
+        mailbox_kind: MailboxKind = MailboxKind.PERSONAL,
+        mailbox_email: str = "",
+        graph_mailbox_id: str | None = None,
+        max_messages: int = 100,
+    ) -> list[GraphMessage]:
+        del user_assertion, tenant_id, mailbox_kind, graph_mailbox_id
+        sender = mailbox_email or "me@contoso.com"
+        samples = [
+            (
+                "stub-sent-1",
+                "Re: invoice",
+                "Thanks for sending the invoice. I have processed it and will confirm shortly.",
+            ),
+            (
+                "stub-sent-2",
+                "Re: schedule",
+                "Happy to schedule a call next week — please share a couple of slots.",
+            ),
+            (
+                "stub-sent-3",
+                "Re: update",
+                "Thanks for the update. I have noted this on our side and will follow up.",
+            ),
+        ]
+        return [
+            GraphMessage(
+                message_id=mid,
+                subject=subj,
+                body=body,
+                sender=sender,
+            )
+            for mid, subj, body in samples[: max(0, max_messages)]
+        ]
 
 
 class OboMailGraphClient:
@@ -349,7 +399,11 @@ class OboMailGraphClient:
         graph_mailbox_id: str | None,
     ) -> GraphMessage:
         token = self._acquire_obo_token(user_assertion=user_assertion, tenant_id=tenant_id)
-        headers = {"Authorization": f"Bearer {token}"}
+        # Prefer plain text — HTML bodies can crash local embedding runtimes.
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Prefer": 'outlook.body-content-type="text"',
+        }
         root = _mailbox_root(
             mailbox_kind=mailbox_kind,
             mailbox_email=mailbox_email,
@@ -363,9 +417,18 @@ class OboMailGraphClient:
                     params={"$select": "id,subject,body,from,hasAttachments"},
                 )
                 if resp.status_code >= 400:
+                    logger.info(
+                        "graph_get_message_failed status=%s",
+                        resp.status_code,
+                    )
                     raise AppError(
                         code="CONNECTOR_FAILURE",
-                        message="Graph could not read the message.",
+                        message=(
+                            "Graph could not read the message. "
+                            "Ensure the add-in sends a REST item id (convertToRestId)."
+                            if resp.status_code == 400
+                            else "Graph could not read the message."
+                        ),
                         status_code=502,
                         retryable=True,
                     )
@@ -505,6 +568,88 @@ class OboMailGraphClient:
                 retryable=True,
             )
         return GraphSendResult(graph_message_id=f"graph-fwd-{message_id}")
+
+    def list_sent_messages(
+        self,
+        *,
+        user_assertion: str,
+        tenant_id: str,
+        mailbox_kind: MailboxKind,
+        mailbox_email: str,
+        graph_mailbox_id: str | None,
+        max_messages: int = 100,
+    ) -> list[GraphMessage]:
+        token = self._acquire_obo_token(user_assertion=user_assertion, tenant_id=tenant_id)
+        root = _mailbox_root(
+            mailbox_kind=mailbox_kind,
+            mailbox_email=mailbox_email,
+            graph_mailbox_id=graph_mailbox_id,
+        )
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Prefer": 'outlook.body-content-type="text"',
+        }
+        page_size = min(50, max(1, max_messages))
+        url: str | None = f"{root}/mailFolders/sentitems/messages"
+        params: dict[str, str] | None = {
+            "$top": str(page_size),
+            "$orderby": "sentDateTime desc",
+            "$select": "id,subject,body,bodyPreview,from",
+        }
+        out: list[GraphMessage] = []
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                while url and len(out) < max_messages:
+                    resp = client.get(url, headers=headers, params=params)
+                    params = None  # nextLink already includes query string
+                    if resp.status_code >= 400:
+                        logger.info(
+                            "graph_list_sent_failed status=%s",
+                            resp.status_code,
+                        )
+                        raise AppError(
+                            code="CONNECTOR_FAILURE",
+                            message="Graph could not list Sent Items for indexing.",
+                            status_code=502,
+                            retryable=True,
+                        )
+                    data = resp.json()
+                    for row in data.get("value") or []:
+                        if len(out) >= max_messages:
+                            break
+                        body_obj = row.get("body") or {}
+                        body = (
+                            str(body_obj.get("content") or "")
+                            if isinstance(body_obj, dict)
+                            else ""
+                        )
+                        if not body.strip():
+                            body = str(row.get("bodyPreview") or "")
+                        frm = row.get("from") or {}
+                        email_addr = (
+                            (frm.get("emailAddress") or {}) if isinstance(frm, dict) else {}
+                        )
+                        out.append(
+                            GraphMessage(
+                                message_id=str(row.get("id") or ""),
+                                subject=str(row.get("subject") or ""),
+                                body=body,
+                                sender=str(email_addr.get("address") or mailbox_email),
+                            )
+                        )
+                    next_link = data.get("@odata.nextLink")
+                    url = str(next_link) if next_link else None
+        except AppError:
+            raise
+        except httpx.HTTPError:
+            logger.info("graph_list_sent_transport_failed")
+            raise AppError(
+                code="CONNECTOR_FAILURE",
+                message="Graph Sent Items transport failed.",
+                status_code=502,
+                retryable=True,
+            ) from None
+        return [m for m in out if m.message_id]
 
 
 def message_id_hash(subject: str) -> str:

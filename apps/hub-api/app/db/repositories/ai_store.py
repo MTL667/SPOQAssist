@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.domain.models import (
@@ -109,6 +109,20 @@ def latest_reroute_email(db: Session, *, suggestion_id: str) -> str | None:
     return row.corrected_route_email if row else None
 
 
+def count_chunks(db: Session, mailbox_profile_id: str) -> int:
+    stmt = select(func.count()).select_from(MailChunk).where(
+        MailChunk.mailbox_profile_id == mailbox_profile_id
+    )
+    return int(db.execute(stmt).scalar_one())
+
+
+def indexed_source_ids(db: Session, mailbox_profile_id: str) -> set[str]:
+    stmt = select(MailChunk.source_message_id).where(
+        MailChunk.mailbox_profile_id == mailbox_profile_id
+    )
+    return {str(row) for row in db.execute(stmt).scalars().all()}
+
+
 def index_chunks(
     db: Session,
     *,
@@ -117,12 +131,18 @@ def index_chunks(
     embed_fn: Callable[[str], list[float]],
 ) -> int:
     count = 0
+    skipped = 0
     for item in items:
         text = str(item.get("text") or "").strip()
         message_id = str(item.get("message_id") or "")
         if not text or not message_id:
             continue
-        emb = embed_fn(text)
+        try:
+            emb = embed_fn(text)
+        except Exception:
+            skipped += 1
+            logger.info("chunk_embed_skipped mailbox_profile_id=%s", mailbox_profile_id)
+            continue
         if len(emb) != EMBEDDING_DIM:
             emb = (emb + [0.0] * EMBEDDING_DIM)[:EMBEDDING_DIM]
         db.add(
@@ -137,9 +157,10 @@ def index_chunks(
         count += 1
     db.commit()
     logger.info(
-        "chunks_indexed mailbox_profile_id=%s count=%s dim=%s",
+        "chunks_indexed mailbox_profile_id=%s count=%s skipped=%s dim=%s",
         mailbox_profile_id,
         count,
+        skipped,
         EMBEDDING_DIM,
     )
     return count

@@ -44,7 +44,14 @@ def retrieve_similar(
             continue
         scored.append((_cosine(q, [float(x) for x in emb]), row.chunk_text))
     scored.sort(key=lambda t: t[0], reverse=True)
-    return [text for score, text in scored[:limit] if score > 0]
+    if not scored:
+        return []
+    # Prefer clearly related chunks; short/vague mails often score ~0 — still use
+    # the best available sent-history so drafts can be grounded in owner style.
+    strong = [text for score, text in scored[:limit] if score > 0.08]
+    if strong:
+        return strong
+    return [text for _, text in scored[: min(3, limit)]]
 
 
 def lookup_learned_route(

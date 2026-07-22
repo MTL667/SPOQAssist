@@ -89,11 +89,10 @@
           <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open SpoqAssist"/>
         </bt:LongStrings>
       </Resources>
-      <!-- Replace REPLACE_ENTRA_CLIENT_ID with the Entra app (client) ID for this entity.
-           ENTRA_API_AUDIENCE on the hub must match Resource (Application ID URI). -->
+      <!-- SpoqSense Entra app. ENTRA_API_AUDIENCE on the hub must match Resource. -->
       <WebApplicationInfo>
-        <Id>REPLACE_ENTRA_CLIENT_ID</Id>
-        <Resource>api://localhost:3000/REPLACE_ENTRA_CLIENT_ID</Resource>
+        <Id>f957a07d-ab9d-43e9-9f41-6c5c30f8af10</Id>
+        <Resource>api://localhost:3000/f957a07d-ab9d-43e9-9f41-6c5c30f8af10</Resource>
         <Scopes>
           <Scope>access_as_user</Scope>
           <Scope>openid</Scope>

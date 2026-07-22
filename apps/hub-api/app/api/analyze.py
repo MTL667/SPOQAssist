@@ -5,8 +5,15 @@ from fastapi import APIRouter
 from app.api.deps import AuthCtx, DbSession, MailboxContentAccess
 from app.core.errors import AppError
 from app.db.repositories import ai_store
-from app.domain.schemas import AnalyzeRequest, IndexRequest, IndexResponse, SuggestionOut
+from app.domain.schemas import (
+    AnalyzeRequest,
+    IndexRequest,
+    IndexResponse,
+    SuggestionOut,
+    SyncIndexRequest,
+)
 from app.services.analyze import run_analyze
+from app.services.history_sync import ensure_history_indexed, sync_sent_history
 from app.services.inference import EMBEDDING_DIM, get_inference_client
 
 router = APIRouter(prefix="/v1/mailbox_profiles", tags=["analyze"])
@@ -14,20 +21,29 @@ router = APIRouter(prefix="/v1/mailbox_profiles", tags=["analyze"])
 MAX_INDEX_ITEMS = 100
 
 
-@router.post("/{mailbox_profile_id}/messages/{message_id}/analyze", response_model=SuggestionOut)
-async def analyze_message(
+@router.post("/{mailbox_profile_id}/analyze", response_model=SuggestionOut)
+def analyze_message(
     mailbox_profile_id: str,
-    message_id: str,
     body: AnalyzeRequest,
     access: MailboxContentAccess,
     auth: AuthCtx,
     db: DbSession,
 ) -> SuggestionOut:
     del mailbox_profile_id
+    # First analyze on an empty mailbox triggers Sent Items crawl for grounded drafts.
+    ensure_history_indexed(
+        db,
+        mailbox_profile_id=access.profile.id,
+        user_assertion=auth.user_assertion,
+        tenant_id=auth.principal.tenant_id,
+        mailbox_kind=access.profile.kind,
+        mailbox_email=access.profile.email,
+        graph_mailbox_id=access.profile.graph_mailbox_id,
+    )
     return run_analyze(
         db,
         mailbox_profile_id=access.profile.id,
-        message_id=message_id,
+        message_id=body.message_id,
         actor_oid=auth.principal.subject,
         user_assertion=auth.user_assertion,
         tenant_id=auth.principal.tenant_id,
@@ -39,7 +55,7 @@ async def analyze_message(
 
 
 @router.post("/{mailbox_profile_id}/index", response_model=IndexResponse)
-async def index_history(
+def index_history(
     body: IndexRequest,
     access: MailboxContentAccess,
     db: DbSession,
@@ -62,4 +78,31 @@ async def index_history(
         mailbox_profile_id=access.profile.id,
         indexed_count=count,
         embedding_dim=EMBEDDING_DIM,
+        total_chunks=ai_store.count_chunks(db, access.profile.id),
+    )
+
+
+@router.post("/{mailbox_profile_id}/index/sync", response_model=IndexResponse)
+def sync_index_from_graph(
+    body: SyncIndexRequest,
+    access: MailboxContentAccess,
+    auth: AuthCtx,
+    db: DbSession,
+) -> IndexResponse:
+    """Crawl Sent Items via Graph and index embeddings for grounded drafts."""
+    count = sync_sent_history(
+        db,
+        mailbox_profile_id=access.profile.id,
+        user_assertion=auth.user_assertion,
+        tenant_id=auth.principal.tenant_id,
+        mailbox_kind=access.profile.kind,
+        mailbox_email=access.profile.email,
+        graph_mailbox_id=access.profile.graph_mailbox_id,
+        max_messages=body.max_messages,
+    )
+    return IndexResponse(
+        mailbox_profile_id=access.profile.id,
+        indexed_count=count,
+        embedding_dim=EMBEDDING_DIM,
+        total_chunks=ai_store.count_chunks(db, access.profile.id),
     )

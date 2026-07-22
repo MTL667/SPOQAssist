@@ -11,6 +11,20 @@ async function getHttpsOptions() {
 
 module.exports = async (env, argv) => {
   const dev = argv.mode !== "production";
+  // Dev: serve add-in over HTTPS and proxy hub calls same-origin to avoid mixed-content blocks
+  // (https://localhost:3000 → http://hub). Override with HUB_PROXY_TARGET / HUB_BASE_URL.
+  const hubProxyTarget =
+    process.env.HUB_PROXY_TARGET ||
+    process.env.HUB_BASE_URL ||
+    "http://192.168.0.183:8000";
+  // Dev default: same-origin relative URLs ("") so Office WebView uses the webpack
+  // HTTPS proxy (/health, /v1 → hub) regardless of localhost vs 127.0.0.1.
+  const hubPublicBase = process.env.HUB_PUBLIC_BASE_URL
+    ? process.env.HUB_PUBLIC_BASE_URL
+    : dev
+      ? ""
+      : hubProxyTarget;
+
   return {
     entry: {
       taskpane: ["./src/taskpane/index.tsx"],
@@ -38,9 +52,7 @@ module.exports = async (env, argv) => {
     },
     plugins: [
       new webpack.DefinePlugin({
-        "process.env.HUB_BASE_URL": JSON.stringify(
-          process.env.HUB_BASE_URL || "http://localhost:8000"
-        ),
+        "process.env.HUB_BASE_URL": JSON.stringify(hubPublicBase),
       }),
       new HtmlWebpackPlugin({
         filename: "taskpane.html",
@@ -63,6 +75,14 @@ module.exports = async (env, argv) => {
       },
       port: 3000,
       hot: true,
+      proxy: [
+        {
+          context: ["/health", "/v1"],
+          target: hubProxyTarget,
+          changeOrigin: true,
+          secure: false,
+        },
+      ],
     },
     devtool: dev ? "source-map" : false,
   };

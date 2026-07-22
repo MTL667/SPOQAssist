@@ -21,6 +21,7 @@ import {
   connectMailbox,
   fetchHealth,
   submitFeedback,
+  syncMailboxIndex,
 } from "./api/client";
 import { mapSuggestion } from "./api/mappers";
 import { AnalyzingState } from "./components/AnalyzingState";
@@ -146,6 +147,16 @@ export function App(): React.JSX.Element {
         });
         profileId = connected.id;
         setMailboxProfileId(profileId, connectEmail);
+        // Initial Sent Items crawl for grounded drafts (hub also auto-syncs if empty).
+        try {
+          await syncMailboxIndex({
+            token,
+            mailboxProfileId: profileId,
+            maxMessages: 100,
+          });
+        } catch {
+          /* analyze path will retry ensure_history_indexed */
+        }
       } catch (err) {
         setErrorMessage(err instanceof Error ? err.message : "Mailbox connect failed");
         return null;

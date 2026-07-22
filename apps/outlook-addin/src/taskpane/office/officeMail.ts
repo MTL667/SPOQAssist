@@ -27,6 +27,18 @@ export function getSelectedMail(): Promise<SelectedMail | null> {
       itemId = _stableLocalId;
     } else {
       _stableLocalId = null;
+      // Graph /me/messages/{id} requires a REST id; Office.js itemId is EWS-format.
+      try {
+        const mailbox = Office.context.mailbox;
+        if (typeof mailbox.convertToRestId === "function") {
+          itemId = mailbox.convertToRestId(
+            itemId,
+            Office.MailboxEnums.RestVersion.v2_0
+          );
+        }
+      } catch {
+        /* keep EWS id; hub may still fail closed on Graph */
+      }
     }
 
     const subject = item.subject || "";

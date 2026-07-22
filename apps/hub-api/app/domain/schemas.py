@@ -85,6 +85,8 @@ class SuggestionOut(BaseModel):
 
 
 class AnalyzeRequest(BaseModel):
+    # Outlook itemIds often contain '/' — keep in body, not path, to avoid route 404s.
+    message_id: str = Field(min_length=1, max_length=2048)
     include_draft: bool = True
     subject: str | None = None
     body: str | None = None
@@ -131,10 +133,15 @@ class IndexRequest(BaseModel):
     # each: {message_id, text} — no full bodies in logs
 
 
+class SyncIndexRequest(BaseModel):
+    max_messages: int = Field(default=100, ge=1, le=300)
+
+
 class IndexResponse(BaseModel):
     mailbox_profile_id: str
     indexed_count: int
     embedding_dim: int = 1024
+    total_chunks: int | None = None
 
 
 class SharedAiSettingsIn(BaseModel):

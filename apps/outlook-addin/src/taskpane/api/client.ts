@@ -14,17 +14,24 @@ export interface OpsHealthDetail {
 }
 
 function hubBaseUrl(): string {
-  const fromEnv =
-    typeof process !== "undefined" && process.env && process.env.HUB_BASE_URL
-      ? process.env.HUB_BASE_URL
-      : "";
-  return (fromEnv || "http://localhost:8000").replace(/\/$/, "");
+  // webpack DefinePlugin injects a string literal for process.env.HUB_BASE_URL.
+  // Do not gate on `process` existing — Office WebViews often have no Node `process`,
+  // which previously fell through to http://localhost:8000 (mixed-content blocked).
+  const injected = process.env.HUB_BASE_URL;
+  if (typeof injected === "string") {
+    return injected.replace(/\/$/, "");
+  }
+  return "http://localhost:8000";
 }
 
 async function parseError(response: Response): Promise<string> {
   try {
-    const data = (await response.json()) as { error?: { message?: string; code?: string } };
+    const data = (await response.json()) as {
+      error?: { message?: string; code?: string };
+      detail?: string | { msg?: string }[];
+    };
     if (data.error?.message) return data.error.message;
+    if (typeof data.detail === "string") return data.detail;
   } catch {
     /* ignore */
   }
@@ -60,7 +67,7 @@ export async function analyzeMessage(params: {
   includeDraft?: boolean;
 }): Promise<SuggestionOut> {
   const response = await fetch(
-    `${hubBaseUrl()}/v1/mailbox_profiles/${params.mailboxProfileId}/messages/${encodeURIComponent(params.messageId)}/analyze`,
+    `${hubBaseUrl()}/v1/mailbox_profiles/${params.mailboxProfileId}/analyze`,
     {
       method: "POST",
       headers: {
@@ -69,6 +76,7 @@ export async function analyzeMessage(params: {
         Accept: "application/json",
       },
       body: JSON.stringify({
+        message_id: params.messageId,
         include_draft: params.includeDraft !== false,
         subject: params.subject,
         body: params.body,
@@ -151,6 +159,34 @@ export async function confirmOutbound(params: {
 
 export function getHubBaseUrl(): string {
   return hubBaseUrl();
+}
+
+export async function syncMailboxIndex(params: {
+  token: string;
+  mailboxProfileId: string;
+  maxMessages?: number;
+}): Promise<{ indexed_count: number; total_chunks: number | null }> {
+  const response = await fetch(
+    `${hubBaseUrl()}/v1/mailbox_profiles/${params.mailboxProfileId}/index/sync`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${params.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ max_messages: params.maxMessages ?? 100 }),
+    }
+  );
+  if (!response.ok) throw new Error(await parseError(response));
+  const data = (await response.json()) as {
+    indexed_count: number;
+    total_chunks?: number | null;
+  };
+  return {
+    indexed_count: data.indexed_count,
+    total_chunks: data.total_chunks ?? null,
+  };
 }
 
 export async function connectMailbox(params: {
