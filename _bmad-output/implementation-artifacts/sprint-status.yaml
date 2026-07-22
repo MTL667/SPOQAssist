@@ -1,0 +1,43 @@
+# SpoqAssist sprint status
+generated: '2026-07-22'
+project: SpoqAssist
+
+epics:
+  1-connect-and-sign-in:
+    status: done
+  2-get-ai-suggestions-in-outlook:
+    status: done
+  3-confirm-feedback-learning:
+    status: done
+  4-shared-work-trust-boundaries:
+    status: done
+
+stories:
+  # Epic 1
+  1-1-scaffold-monorepo-hub-and-outlook-addin: { status: done, epic: 1 }
+  1-2-entra-sign-in-to-hub: { status: done, epic: 1 }
+  1-3-mailbox-entitlement-gate: { status: done, epic: 1 }
+  1-4-connect-mailbox-via-microsoft-graph: { status: done, epic: 1 }
+  1-5-hub-health-and-unavailable-state-in-add-in: { status: done, epic: 1 }
+  1-6-central-outlook-add-in-deployment-per-entra-entity: { status: done, epic: 1 }
+  # Epic 2
+  2-1-spoq-fluent-theme-and-pane-shell: { status: done, epic: 2 }
+  2-2-read-selected-message-and-attachments: { status: done, epic: 2 }
+  2-3-index-historical-sent-and-forwarded-mail: { status: done, epic: 2 }
+  2-4-analyze-classify-route-priority-confidence: { status: done, epic: 2 }
+  2-5-generate-style-matched-reply-draft: { status: done, epic: 2 }
+  2-6-suggestion-ui-analyzing-hero-review-why: { status: done, epic: 2 }
+  # Epic 3
+  3-1-feedback-controls-accept-edit-reject: { status: done, epic: 3 }
+  3-2-confirm-outbound-send-or-forward-hitl: { status: done, epic: 3 }
+  3-3-ai-disclosure-on-ai-assisted-outbound: { status: done, epic: 3 }
+  3-4-change-route-and-teach-via-route-picker: { status: done, epic: 3 }
+  3-5-persist-feedback-and-audit-trail: { status: done, epic: 3 }
+  3-6-shared-routing-learning-cycle: { status: done, epic: 3 }
+  # Epic 4
+  4-1-enforce-personal-admin-blind-and-shared-admin-config: { status: done, epic: 4 }
+  4-2-shared-mailbox-suggestions-in-outlook-for-delegates: { status: done, epic: 4 }
+  4-3-concurrent-shared-mailbox-delegate-work: { status: done, epic: 4 }
+  4-4-ai-index-retention-aligned-to-exchange: { status: done, epic: 4 }
+  4-5-processing-and-access-register: { status: done, epic: 4 }
+  4-6-ops-health-surface-without-mail-content: { status: done, epic: 4 }

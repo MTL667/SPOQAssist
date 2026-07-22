@@ -1,0 +1,44 @@
+services:
+  db:
+    image: pgvector/pgvector:0.8.5-pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-spoq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-spoq_dev_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-spoqassist}
+    ports:
+      - "5432:5432"
+    volumes:
+      - spoq_pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-spoq} -d ${POSTGRES_DB:-spoqassist}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    environment:
+      SPOQ_ENV: ${SPOQ_ENV:-dev}
+      SPOQ_LOG_LEVEL: ${SPOQ_LOG_LEVEL:-INFO}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://spoq:spoq_dev_change_me@db:5432/spoqassist}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      GRAPH_MODE: ${GRAPH_MODE:-stub}
+      INFERENCE_MODE: ${INFERENCE_MODE:-stub}
+      ENTRA_TENANT_IDS: ${ENTRA_TENANT_IDS:-}
+      ENTRA_API_AUDIENCE: ${ENTRA_API_AUDIENCE:-}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
+      ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET:-}
+      OPS_PRINCIPAL_OIDS: ${OPS_PRINCIPAL_OIDS:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  spoq_pgdata:

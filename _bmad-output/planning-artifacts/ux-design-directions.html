@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SpoqAssist — Design Directions</title>
+  <style>
+    :root {
+      --brand-primary: #135067;
+      --brand-primary-hover: #0F4054;
+      --brand-accent: #42AB9A;
+      --brand-accent-soft: #CDEFE0;
+      --surface-app: #F3F7FA;
+      --surface-card: #FFFFFF;
+      --text-primary: #1A2B33;
+      --text-secondary: #5B6B73;
+      --link: #2B6CB0;
+      --warning: #D4A017;
+      --danger: #D9481F;
+      --success: #2F9E7A;
+      --radius: 8px;
+      --font: "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      background: #e8eef2;
+      color: var(--text-primary);
+      line-height: 1.4;
+    }
+    header.page {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: var(--brand-primary);
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 24px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header.page h1 { margin: 0; font-size: 18px; font-weight: 600; }
+    header.page p { margin: 0; opacity: 0.85; font-size: 13px; }
+    .nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .nav a {
+      color: #fff;
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.12);
+    }
+    .nav a:hover { background: var(--brand-accent); color: #0B2E2A; }
+    .intro {
+      max-width: 1100px;
+      margin: 24px auto;
+      padding: 0 20px;
+    }
+    .intro h2 { margin: 0 0 8px; font-size: 20px; }
+    .intro ul { margin: 8px 0 0; color: var(--text-secondary); font-size: 14px; }
+    .grid {
+      max-width: 1400px;
+      margin: 0 auto 48px;
+      padding: 0 20px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 24px;
+    }
+    .dir {
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(19,80,103,0.12);
+      display: flex;
+      flex-direction: column;
+    }
+    .dir-meta {
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid #e6edf1;
+    }
+    .dir-meta .badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: var(--brand-primary);
+      background: var(--brand-accent-soft);
+      padding: 3px 8px;
+      border-radius: 999px;
+      margin-bottom: 6px;
+    }
+    .dir-meta h3 { margin: 0 0 4px; font-size: 16px; }
+    .dir-meta p { margin: 0; font-size: 12px; color: var(--text-secondary); }
+    .outlook {
+      background: #cfd6dc;
+      padding: 12px;
+      flex: 1;
+      min-height: 420px;
+    }
+    .outlook-shell {
+      display: grid;
+      grid-template-columns: 1fr 280px;
+      gap: 0;
+      height: 100%;
+      min-height: 400px;
+      background: #fff;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid #b8c2c9;
+    }
+    .mail {
+      padding: 12px 14px;
+      border-right: 1px solid #e0e6ea;
+      font-size: 12px;
+      background: #fafbfc;
+    }
+    .mail .from { font-weight: 700; color: var(--text-primary); }
+    .mail .subj { font-weight: 600; margin: 6px 0 8px; }
+    .mail .body { color: var(--text-secondary); white-space: pre-wrap; }
+    .pane {
+      background: var(--surface-app);
+      display: flex;
+      flex-direction: column;
+      font-size: 12px;
+    }
+    .pane-h {
+      padding: 10px 12px;
+      font-weight: 700;
+      font-size: 13px;
+      border-bottom: 1px solid #dfe7ec;
+    }
+    .pane-b { padding: 10px 12px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--brand-accent-soft);
+      color: #0B2E2A;
+    }
+    .chip.warn { background: #FFF3CD; color: #7A5B00; }
+    .chip.low { background: #E8EEF2; color: var(--text-secondary); }
+    .block {
+      background: var(--surface-card);
+      border-radius: var(--radius);
+      padding: 10px;
+      border: 1px solid #e2e9ee;
+    }
+    .block h4 {
+      margin: 0 0 6px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-secondary);
+    }
+    .block .route { font-weight: 700; font-size: 13px; }
+    .block .draft { color: var(--text-primary); line-height: 1.45; }
+    .why { font-size: 11px; color: var(--link); cursor: pointer; }
+    .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+    .btn {
+      border: none;
+      border-radius: var(--radius);
+      padding: 8px 12px;
+      font: inherit;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .btn:hover { filter: brightness(0.96); }
+    .btn-accent { background: var(--brand-accent); color: #0B2E2A; }
+    .btn-primary { background: var(--brand-primary); color: #fff; }
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid #b8c6ce;
+      color: var(--text-primary);
+    }
+    .btn-danger {
+      background: transparent;
+      border: 1px solid #f0b4a0;
+      color: var(--danger);
+    }
+    .analyzing {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-secondary);
+      padding: 16px 8px;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--brand-accent);
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.35; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.1); }
+    }
+    /* Direction-specific overrides */
+    .d1 .pane-h { background: var(--brand-primary); color: #fff; border: none; }
+    .d2 .block { border: none; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+    .d3 .pane { background: #fff; }
+    .d3 .pane-b { gap: 6px; padding: 8px; }
+    .d3 .block { padding: 8px; border-radius: 6px; }
+    .d3 .btn { padding: 6px 10px; }
+    .d4 .hero-accept {
+      background: linear-gradient(180deg, var(--brand-accent-soft), #fff);
+      border: 1px solid var(--brand-accent);
+      border-radius: var(--radius);
+      padding: 12px;
+    }
+    .d5 .stack-route { border-left: 3px solid var(--brand-accent); }
+    .d5 .stack-draft { border-left: 3px solid var(--brand-primary); }
+    .d6 .tabs {
+      display: flex;
+      border-bottom: 1px solid #dfe7ec;
+      background: #fff;
+    }
+    .d6 .tab {
+      flex: 1;
+      text-align: center;
+      padding: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .d6 .tab.active {
+      color: var(--brand-primary);
+      box-shadow: inset 0 -2px 0 var(--brand-accent);
+    }
+    .d7 .confirm-bar {
+      background: var(--brand-primary);
+      color: #fff;
+      padding: 10px;
+      border-radius: var(--radius);
+      font-size: 11px;
+    }
+    .d7 .confirm-bar strong { display: block; margin-bottom: 6px; }
+    .d8 .timeline { display: flex; flex-direction: column; gap: 0; }
+    .d8 .step {
+      display: grid;
+      grid-template-columns: 20px 1fr;
+      gap: 8px;
+      padding: 8px 0;
+    }
+    .d8 .n {
+      width: 18px; height: 18px; border-radius: 50%;
+      background: var(--brand-accent); color: #0B2E2A;
+      font-size: 10px; font-weight: 800;
+      display: grid; place-items: center;
+    }
+    .compare {
+      max-width: 1100px;
+      margin: 0 auto 40px;
+      padding: 0 20px;
+    }
+    .compare table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      font-size: 13px;
+    }
+    .compare th, .compare td {
+      border-bottom: 1px solid #e6edf1;
+      padding: 10px 12px;
+      text-align: left;
+    }
+    .compare th { background: var(--brand-primary); color: #fff; font-size: 12px; }
+    footer.page {
+      text-align: center;
+      padding: 24px;
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+    @media (max-width: 700px) {
+      .outlook-shell { grid-template-columns: 1fr; }
+      .mail { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="page">
+    <div>
+      <h1>SpoqAssist — Design Directions</h1>
+      <p>SPOQ+ brand · Outlook for Mac task pane · pick a direction or combine</p>
+    </div>
+    <nav class="nav">
+      <a href="#d1">1</a><a href="#d2">2</a><a href="#d3">3</a><a href="#d4">4</a>
+      <a href="#d5">5</a><a href="#d6">6</a><a href="#d7">7</a><a href="#d8">8</a>
+    </nav>
+  </header>
+
+  <section class="intro">
+    <h2>Explore 8 directions</h2>
+    <p>Same mail, same brand tokens — different hierarchy, density, and interaction weight. Look for:</p>
+    <ul>
+      <li><strong>Layout intuitiveness</strong> — does route + draft read in the right order?</li>
+      <li><strong>Interaction style</strong> — one-click Accept vs guided steps</li>
+      <li><strong>Visual weight</strong> — dense ops vs calm breathing room</li>
+      <li><strong>Brand alignment</strong> — mint for action, teal for Confirm gate</li>
+    </ul>
+  </section>
+
+  <div class="grid">
+    <!-- D1 -->
+    <article class="dir d1" id="d1">
+      <div class="dir-meta">
+        <span class="badge">DIR 1</span>
+        <h3>Brand header + stacked proposals</h3>
+        <p>Teal pane header; route then draft; mint Accept; teal Confirm last.</p>
+      </div>
+      <div class="outlook">
+        <div class="outlook-shell">
+          <div class="mail">
+            <div class="from">jan@klant.nl</div>
+            <div class="subj">Vraag over factuur #2063652</div>
+            <div class="body">Beste team,
+
+Kunnen jullie de status van factuur #2063652 doorgeven?
+
+Met vriendelijke groet,
+Jan</div>
+          </div>
+          <div class="pane">
+            <div class="pane-h">SpoqAssist</div>
+            <div class="pane-b">
+              <div><span class="chip">High confidence</span></div>
+              <div class="block">
+                <h4>Route</h4>
+                <div class="route">Forward → finance@</div>
+                <div class="why">Why this route?</div>
+              </div>
+              <div class="block">
+                <h4>Draft reply</h4>
+                <div class="draft">Hoi Jan, ik stuur je vraag door naar Finance. Je hoort snel van ons.</div>
+              </div>
+              <div class="actions">
+                <button class="btn btn-accent">Accept</button>
+                <button class="btn btn-ghost">Edit</button>
+                <button class="btn btn-ghost">Change route</button>
+                <button class="btn btn-danger">Reject</button>
+              </div>
+              <button class="btn btn-primary" style="width:100%">Confirm send…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- D2 -->
+    <article class="dir d2" id="d2">
+      <div class="dir-meta">
+        <span class="badge">DIR 2</span>
+        <h3>Soft cards, airy spacing</h3>
+        <p>More whitespace; lighter chrome; same actions — calmer trust feel.</p>
+      </div>
+      <div class="outlook">
+        <div class="outlook-shell">
+          <div class="mail">
+            <div class="from">jan@klant.nl</div>
+            <div class="subj">Vraag over factuur #2063652</div>
+            <div class="body">…</div>
+          </div>
+          <div class="pane">
+            <div class="pane-h" style="background:#fff">SpoqAssist</div>
+            <div class="pane-b" style="gap:14px;padding:14px">
+              <div style="color:var(--text-secondary);font-size:11px">Suggestion ready</div>
+              <div class="block">
+                <h4>Suggested route</h4>
+                <div class="route">finance@</div>
+                <span class="chip" style="margin-top:6px">High</span>
+              </div>
+              <div class="block">
+                <h4>Suggested reply</h4>
+                <div class="draft">Hoi Jan, ik stuur je vraag door naar Finance…</div>
+              </div>
+              <div class="actions">
+                <button class="btn btn-accent">Accept all</button>
+                <button class="btn btn-ghost">Edit draft</button>
+              </div>
+              <button class="btn btn-primary" style="width:100%">Confirm send…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- D3 -->
+    <article class="dir d3" id="d3">
+      <div class="dir-meta">
+        <span class="badge">DIR 3</span>
+        <h3>Ops-dense / queue speed</h3>
+        <p>Compact for shared mailbox volume; minimal labels; fast scan.</p>
+      </div>
+      <div class="outlook">
+        <div class="outlook-shell">
+          <div class="mail">
+            <div class="from">office queue</div>
+            <div class="subj">3 suggestions ready</div>
+            <div class="body">High-volume shared mailbox mode</div>
+          </div>
+          <div class="pane">
+            <div class="pane-h">SpoqAssist · Queue</div>
+            <div class="pane-b">
+              <div class="block" style="display:flex;justify-content:space-between;align-items:center">
+                <div><strong>→ finance@</strong><div style="color:var(--text-secondary)">Invoice status</div></div>
+                <span class="chip">H</span>
+              </div>
+              <div class="block" style="display:flex;justify-content:space-between;align-items:center">
+                <div><strong>→ support@</strong><div style="color:var(--text-secondary)">Access request</div></div>
+                <span class="chip warn">M</span>
+              </div>
+              <div class="block" style="display:flex;justify-content:space-between;align-items:center">
+                <div><strong>Draft only</strong><div style="color:var(--text-secondary)">Personal tone</div></div>
+                <span class="chip low">L</span>
+              </div>
+              <div class="actions">
+                <button class="btn btn-accent">Accept top</button>
+                <button class="btn btn-primary">Confirm…</button>
+                <button class="btn btn-ghost">Skip</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- D4 -->
+    <article class="dir d4" id="d4">
+      <div class="dir-meta">
+        <span class="badge">DIR 4</span>
+        <h3>One-click hero Accept</h3>
+        <p>Single dominant decision for high confidence; secondary actions tucked.</p>
+      </div>
+      <div class="outlook">
+        <div class="outlook-shell">
+          <div class="mail">
+            <div class="from">jan@klant.nl</div>
+            <div class="subj">Vraag over factuur #2063652</div>
+            <div class="body">…</div>
+          </div>
+          <div class="pane">
+            <div class="pane-h">SpoqAssist</div>
+            <div class="pane-b">
+              <div class="hero-accept">
+                <span class="chip">High confidence</span>
+                <div class="route" style="margin:8px 0 4px">Route to finance@ + send reply</div>
+                <div class="draft" style="font-size:12px;color:var(--text-secondary)">Hoi Jan, ik stuur je vraag door…</div>
+                <button class="btn btn-accent" style="width:100%;margin-top:10px">Accept suggestion</button>
+              </div>
+              <div class="actions">
+                <button class="btn btn-ghost">Edit</button>
+                <button class="btn btn-ghost">Change route</button>
+                <button class="btn btn-danger">Reject</button>
+              </div>
+              <button class="btn btn-primary" style="width:100%">Confirm send…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- D5 -->
+    <article class="dir d5" id="d5">
+      <div class="dir-meta">
+        <span class="badge">DIR 5</span>
+        <h3>Split emphasis: route | draft</h3>
+        <p>Equal co-first-class blocks with colored rails (accent vs primary).</p>
+      </div>
+      <div class="outlook">
+        <div class="outlook-shell">
+          <div class="mail">
+            <div class="from">jan@klant.nl</div>
+            <div class="subj">Vraag over factuur #2063652</div>
+            <div class="body">…</div>
+          </div>
+          <div class="pane">
+            <div class="pane-h">SpoqAssist</div>
+            <div class="pane-b">
+              <div class="block stack-route">
+                <h4>Route</h4>
+                <div class="route">finance@</div>
+                <span class="chip">High</span>
+                <div class="actions" style="margin-top:8px">
+                  <button class="btn btn-accent">Accept route</button>
+                  <button class="btn btn-ghost">Change</button>
+                </div>
+              </div>
+              <div class="block stack-draft">
+                <h4>Draft</h4>
+                <div class="draft">Hoi Jan, ik stuur je vraag door naar Finance…</div>
+                <div class="actions" style="margin-top:8px">
+                  <button class="btn btn-accent">Accept draft</button>
+                  <button class="btn btn-ghost">Edit</button>
+                </div>
+              </div>
+              <button class="btn btn-primary" style="width:100%">Confirm send / forward…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- D6 -->
+    <article class="dir d6" id="d6">
+      <div class="dir-meta">
+        <span class="badge">DIR 6</span>
+        <h3>Tabbed: Route · Draft · Why</h3>
+        <p>Less simultaneous content; tabs for focus (risk: extra click).</p>
+      </div>
+      <div class="outlook">
+        <div class="outlook-shell">
+          <div class="mail">
+            <div class="from">jan@klant.nl</div>
+            <div class="subj">Vraag over factuur #2063652</div>
+            <div class="body">…</div>
+          </div>
+          <div class="pane">
+            <div class="pane-h">SpoqAssist</div>
+            <div class="tabs">
+              <div class="tab active">Route</div>
+              <div class="tab">Draft</div>
+              <div class="tab">Why</div>
+            </div>
+            <div class="pane-b">
+              <div class="block">
+                <div class="route">Forward → finance@</div>
+                <span class="chip" style="margin-top:8px">High confidence</span>
+                <p style="margin:8px 0 0;color:var(--text-secondary);font-size:11px">Invoice keywords + known Finance pattern</p>
+              </div>
+              <div class="actions">
+                <button class="btn btn-accent">Accept</button>
+                <button class="btn btn-ghost">Change</button>
+                <button class="btn btn-danger">Reject</button>
+              </div>
+              <button class="btn btn-primary" style="width:100%">Confirm…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- D7 -->
+    <article class="dir d7" id="d7">
+      <div class="dir-meta">
+        <span class="badge">DIR 7</span>
+        <h3>HITL Confirm-first framing</h3>
+        <p>Teal confirm bar always visible — control is the emotional anchor.</p>
+      </div>
+      <div class="outlook">
+        <div class="outlook-shell">
+          <div class="mail">
+            <div class="from">jan@klant.nl</div>
+            <div class="subj">Vraag over factuur #2063652</div>
+            <div class="body">…</div>
+          </div>
+          <div class="pane">
+            <div class="pane-h">SpoqAssist</div>
+            <div class="pane-b">
+              <div class="confirm-bar">
+                <strong>Nothing sends until you confirm</strong>
+                Review the suggestion, then confirm send or forward.
+              </div>
+              <div class="block">
+                <h4>Proposal</h4>
+                <div class="route">finance@ + short reply</div>
+                <div class="draft" style="margin-top:6px">Hoi Jan, ik stuur je vraag door…</div>
+              </div>
+              <div class="actions">
+                <button class="btn btn-accent">Accept</button>
+                <button class="btn btn-ghost">Edit</button>
+                <button class="btn btn-danger">Reject</button>
+              </div>
+              <button class="btn btn-primary" style="width:100%">Confirm send…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- D8 -->
+    <article class="dir d8" id="d8">
+      <div class="dir-meta">
+        <span class="badge">DIR 8</span>
+        <h3>Guided steps (wizard-lite)</h3>
+        <p>1 Review → 2 Accept → 3 Confirm. Clearest for low tech-savviness; slightly slower.</p>
+      </div>
+      <div class="outlook">
+        <div class="outlook-shell">
+          <div class="mail">
+            <div class="from">jan@klant.nl</div>
+            <div class="subj">Vraag over factuur #2063652</div>
+            <div class="body">…</div>
+          </div>
+          <div class="pane">
+            <div class="pane-h">SpoqAssist · Step 1 of 3</div>
+            <div class="pane-b">
+              <div class="timeline">
+                <div class="step"><div class="n">1</div><div><strong>Review</strong><div class="draft">Route finance@ · draft ready</div></div></div>
+                <div class="step"><div class="n" style="background:#E8EEF2;color:var(--text-secondary)">2</div><div style="color:var(--text-secondary)"><strong>Accept or edit</strong></div></div>
+                <div class="step"><div class="n" style="background:#E8EEF2;color:var(--text-secondary)">3</div><div style="color:var(--text-secondary)"><strong>Confirm send</strong></div></div>
+              </div>
+              <div class="block">
+                <div class="draft">Hoi Jan, ik stuur je vraag door naar Finance. Je hoort snel van ons.</div>
+              </div>
+              <button class="btn btn-accent" style="width:100%">Continue</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+  </div>
+
+  <section class="compare">
+    <h2 style="font-size:18px;margin:0 0 12px">Quick compare</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Dir</th>
+          <th>Best for</th>
+          <th>Trade-off</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>1 Brand header</td><td>Balanced default, SPOQ+ recognizable</td><td>Header uses brand space</td></tr>
+        <tr><td>2 Airy cards</td><td>Calm trust, personal mailbox</td><td>Slower scan at volume</td></tr>
+        <tr><td>3 Ops-dense</td><td>Shared mailbox / office@</td><td>Less draft presence</td></tr>
+        <tr><td>4 Hero Accept</td><td>High-confidence one-click</td><td>Can hide nuance</td></tr>
+        <tr><td>5 Split rails</td><td>Route &amp; draft co-equal</td><td>Two Accept buttons</td></tr>
+        <tr><td>6 Tabs</td><td>Focus / less clutter</td><td>Extra click to see draft</td></tr>
+        <tr><td>7 Confirm-first</td><td>HITL / control emotion</td><td>Slightly heavier chrome</td></tr>
+        <tr><td>8 Wizard-lite</td><td>Lowest tech-savviness</td><td>More steps for power users</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer class="page">
+    Open this file in a browser · reply in chat with your favorite direction(s) or a combination
+  </footer>
+</body>
+</html>
