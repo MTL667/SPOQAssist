@@ -334,6 +334,12 @@ def run_analyze(
         precompute_status,
     )
 
+    draft_error = None
+    if body.include_draft and signals.history_status != HistoryStatus.NONE and not signals.draft:
+        draft_error = signals.draft_error or (
+            "Draft unavailable — try Generate response again."
+        )
+
     return SuggestionOut(
         suggestion_id=suggestion.id,
         mailbox_profile_id=mailbox_profile_id,
@@ -343,6 +349,7 @@ def run_analyze(
         confidence=Confidence(suggestion.confidence),
         suggested_route=route,
         draft=suggestion.draft,
+        draft_error=draft_error,
         why=[WhyItem(**w) for w in json.loads(suggestion.why_json)],
         history_status=signals.history_status,
         attachment_warnings=warnings,

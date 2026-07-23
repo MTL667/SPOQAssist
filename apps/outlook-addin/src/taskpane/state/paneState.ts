@@ -37,6 +37,7 @@ export interface SuggestionOut {
   confidence: Confidence;
   suggested_route?: { display_name?: string | null; email: string } | null;
   draft?: string | null;
+  draft_error?: string | null;
   why?: { code: string; text: string }[];
   history_status: HistoryStatus;
   attachment_warnings?: { name: string; reason: string }[];
@@ -71,6 +72,7 @@ export interface SuggestionViewModel {
   confidence: Confidence;
   suggestedRoute: { displayName?: string | null; email: string } | null;
   draft: string | null | undefined;
+  draftError: string | null;
   why: { code: string; text: string }[];
   historyStatus: HistoryStatus;
   attachmentWarnings: { name: string; reason: string }[];

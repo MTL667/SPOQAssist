@@ -104,6 +104,7 @@ class SuggestionOut(BaseModel):
     confidence: Confidence
     suggested_route: RouteOut | None = None
     draft: str | None = None
+    draft_error: str | None = None
     why: list[WhyItem] = Field(default_factory=list)
     history_status: HistoryStatus = HistoryStatus.NONE
     attachment_warnings: list[AttachmentWarning] = Field(default_factory=list)

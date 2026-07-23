@@ -142,7 +142,7 @@ class TestVLLMDraft:
             mock_client.post.return_value = _mock_response(_openai_chat_response(draft_text))
 
             client = VLLMInferenceClient()
-            result = client._generate_draft(
+            draft, err = client._generate_draft(
                 subject="Test",
                 body="Beste, al nieuws?",
                 sender="jean@example.com",
@@ -152,13 +152,15 @@ class TestVLLMDraft:
                 route_email=None,
                 behavior_summary="Dutch informal, concise.",
             )
-            assert result is not None
-            assert "Jean" in result or "kijk" in result
+            assert draft is not None
+            assert err is None
+            assert "Jean" in draft or "kijk" in draft
             # Verify it called the draft URL
             call_args = mock_client.post.call_args
             assert "draft:8002" in call_args[0][0]
             payload = call_args[1]["json"]
             assert payload["model"] == "Qwen/Qwen3-72B"
+            assert client.draft_timeout == 30.0
 
     def test_generate_draft_returns_none_on_timeout(self, vllm_settings):
         with patch("httpx.Client") as MockClient:
@@ -168,7 +170,7 @@ class TestVLLMDraft:
             mock_client.post.side_effect = httpx.ReadTimeout("timeout")
 
             client = VLLMInferenceClient()
-            result = client._generate_draft(
+            draft, err = client._generate_draft(
                 subject="Test",
                 body="Hello",
                 sender="jean@example.com",
@@ -177,7 +179,9 @@ class TestVLLMDraft:
                 category="action_required",
                 route_email=None,
             )
-            assert result is None
+            assert draft is None
+            assert err is not None
+            assert "timed out" in err.lower()
 
     def test_generate_draft_rejects_parrot(self, vllm_settings):
         distinctive = "We hebben de laptop al besteld en de factuur volgt later deze week"
@@ -191,7 +195,7 @@ class TestVLLMDraft:
             client = VLLMInferenceClient()
             # Body: latest message is "Nieuwe vraag" ABOVE the Original Message marker;
             # the distinctive text sits in the quoted thread context below it.
-            result = client._generate_draft(
+            draft, err = client._generate_draft(
                 subject="Test",
                 body=(
                     "Nieuwe vraag van Jean over de levering.\n\n"
@@ -205,7 +209,9 @@ class TestVLLMDraft:
                 category="action_required",
                 route_email=None,
             )
-            assert result is None
+            assert draft is None
+            assert err is not None
+            assert "rejected" in err.lower() or "filtered" in err.lower()
 
 
 class TestVLLMBehaviorSummary:

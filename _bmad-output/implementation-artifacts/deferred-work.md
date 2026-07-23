@@ -1,8 +1,10 @@
 # Deferred work
 
-## Deferred from: quick-dev split — sync vs missing draft (2026-07-23)
+## Deferred from: spec-fix-missing-draft-after-analyze review (2026-07-23)
 
-- **No draft after analyze** (“No draft yet” / Generate response) despite classify succeeding — investigate draft timeout, parrot reject, include_draft path, and UI mapping; deferred while history-sync stuck state is fixed first
+- Draft-only HTTP endpoint for Generate response (Ask First left open; retry still re-runs analyze)
+- Friendlier user-facing copy for filter rejects (today exposes “inverted perspective / too similar”)
+- Analyze wall-clock budget vs 30s draft timeout under load (latency NFR tradeoff)
 
 ## Deferred from: spec-fix-stuck-history-sync-progress review (2026-07-23)
 

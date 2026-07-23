@@ -162,6 +162,7 @@ def test_index_sync_from_sent_items(app_client, make_token):
     assert analyzed.status_code == 200, analyzed.text
     assert analyzed.json()["history_status"] in {"limited", "sufficient"}
     assert analyzed.json()["draft"]
+    assert analyzed.json().get("draft_error") in (None, "")
 
 
 def test_analyze_does_not_require_history_sync(app_client, make_token):
@@ -185,6 +186,8 @@ def test_analyze_does_not_require_history_sync(app_client, make_token):
     # Empty index → no grounded draft, but analyze must still succeed promptly.
     assert body["history_status"] == "none"
     assert body.get("draft") in (None, "")
+    # Must not claim a draft timeout when history was never available.
+    assert body.get("draft_error") in (None, "")
     profile = app_client.get(
         f"/v1/mailbox_profiles/{profile_id}",
         headers=_auth(token),

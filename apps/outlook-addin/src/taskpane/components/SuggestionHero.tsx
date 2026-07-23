@@ -63,12 +63,18 @@ export function SuggestionHero({
         </Text>
       ) : null}
       {hasDraft ? <Text className={styles.draft}>{suggestion.draft}</Text> : null}
-      {!hasDraft && canGenerate ? (
+      {!hasDraft && suggestion.historyStatus === "none" ? (
         <Text className={styles.meta} block>
-          No draft yet. Generate a response, or edit one yourself.
+          No grounded draft yet — mailbox history is still empty or syncing.
         </Text>
       ) : null}
-      {suggestion.historyStatus === "none" || suggestion.historyStatus === "limited" ? (
+      {!hasDraft && canGenerate ? (
+        <Text className={styles.meta} block>
+          {suggestion.draftError ||
+            "No draft yet. Generate a response, or edit one yourself."}
+        </Text>
+      ) : null}
+      {suggestion.historyStatus === "limited" ? (
         <Text className={styles.meta} block>
           Limited sent history — draft may be generic.
         </Text>

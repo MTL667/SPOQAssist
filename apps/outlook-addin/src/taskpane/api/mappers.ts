@@ -21,6 +21,7 @@ export function mapSuggestion(api: SuggestionOut): SuggestionViewModel {
         }
       : null,
     draft: api.draft,
+    draftError: api.draft_error ?? null,
     why: (api.why || []).map((w) => ({ code: w.code, text: w.text })),
     historyStatus: api.history_status,
     attachmentWarnings: (api.attachment_warnings || []).map((w) => ({

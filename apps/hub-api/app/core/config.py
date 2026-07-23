@@ -63,7 +63,7 @@ class Settings(BaseSettings):
         default="http://localhost:8004/v1", validation_alias="VLLM_RERANKER_URL"
     )
     vllm_draft_timeout: float = Field(
-        default=12.0, validation_alias="VLLM_DRAFT_TIMEOUT"
+        default=30.0, validation_alias="VLLM_DRAFT_TIMEOUT"
     )
     vllm_classify_timeout: float = Field(
         default=8.0, validation_alias="VLLM_CLASSIFY_TIMEOUT"

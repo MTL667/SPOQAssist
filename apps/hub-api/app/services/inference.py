@@ -71,6 +71,7 @@ class AnalyzeSignals:
     why: list[dict]
     draft: str | None
     history_status: HistoryStatus
+    draft_error: str | None = None
 
 
 class InferenceClient(Protocol):
@@ -401,6 +402,11 @@ class OllamaInferenceClient:
                 behavior_summary=behavior_summary,
             )
             stub.draft = draft
+            stub.draft_error = (
+                None
+                if draft
+                else "Draft unavailable — try Generate response again."
+            )
             if behavior_summary and behavior_summary.strip():
                 stub.why.append(
                     {
@@ -410,6 +416,7 @@ class OllamaInferenceClient:
                 )
         elif include_draft:
             stub.draft = None
+            stub.draft_error = None
         # Touch rerank model name for ops visibility (ranking applied via retrieve order).
         logger.info("analyze_fast_local rerank_model=%s", self.rerank_model)
         return stub
@@ -534,14 +541,10 @@ class OllamaInferenceClient:
         except httpx.TimeoutException:
             logger.info("ollama_draft_timeout lang=%s", lang)
             return None
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, httpx.RequestError) as exc:
+            # Soft-fail like vLLM — classify must still return 200 without a draft.
             logger.info("ollama_draft_failed err_type=%s", type(exc).__name__)
-            raise AppError(
-                code="INFERENCE_UNAVAILABLE",
-                message="Instruct model is unavailable on the hub.",
-                status_code=503,
-                retryable=True,
-            ) from None
+            return None
 
     def _reject_thread_parrot(
         self,
@@ -795,9 +798,8 @@ class VLLMInferenceClient:
                     behavior_summary=behavior_summary,
                 )
 
-        draft = None
         if include_draft and signals.history_status != HistoryStatus.NONE:
-            draft = self._generate_draft(
+            draft, draft_error = self._generate_draft(
                 subject=subject,
                 body=body,
                 sender=sender,
@@ -808,6 +810,7 @@ class VLLMInferenceClient:
                 behavior_summary=behavior_summary,
             )
             signals.draft = draft
+            signals.draft_error = draft_error
             if behavior_summary and behavior_summary.strip():
                 signals.why.append(
                     {
@@ -817,6 +820,7 @@ class VLLMInferenceClient:
                 )
         elif include_draft:
             signals.draft = None
+            signals.draft_error = None
         return signals
 
     def _classify_via_27b(
@@ -1002,7 +1006,8 @@ class VLLMInferenceClient:
         category: str,
         route_email: str | None,
         behavior_summary: str | None = None,
-    ) -> str | None:
+    ) -> tuple[str | None, str | None]:
+        """Return (draft, draft_error). Soft-fail never raises for analyze."""
         owner = mailbox_email or "the mailbox owner"
         owner_name = _display_name_from_email(mailbox_email) or owner
         counterpart = sender or "the other person"
@@ -1106,32 +1111,42 @@ class VLLMInferenceClient:
                 )
                 if not isinstance(content, str):
                     logger.info("vllm_draft_malformed_content")
-                    return None
+                    return None, "Draft model returned empty or malformed content."
                 draft = content.strip() or None
-                cleaned = self._reject_inverted_perspective(
+                if not draft:
+                    logger.info("vllm_draft_empty lang=%s", lang)
+                    return None, "Draft model returned empty content."
+                after_perspective = self._reject_inverted_perspective(
                     draft,
                     mailbox_email=mailbox_email,
                     sender=sender,
                 )
+                if after_perspective is None:
+                    return None, "Draft rejected: inverted perspective (filtered)."
                 cleaned = self._reject_thread_parrot(
-                    cleaned,
+                    after_perspective,
                     thread_context=parts.thread_context or "",
                     style_snippets=snippets,
                 )
-                if cleaned:
-                    return cleaned
-                logger.info("vllm_draft_empty lang=%s", lang)
-                return None
+                if cleaned is None:
+                    return None, "Draft rejected: too similar to thread (filtered)."
+                return cleaned, None
         except httpx.TimeoutException:
             logger.info("vllm_draft_timeout lang=%s model=%s", lang, self.draft_model)
-            return None
+            return None, "Draft timed out — try Generate response again."
         except httpx.HTTPError as exc:
             # Soft-fail: analyze stays 200 with draft=null (Generate response retry).
             logger.info("vllm_draft_failed err_type=%s", type(exc).__name__)
-            return None
+            return None, "Draft model unavailable — try Generate response again."
+        except httpx.RequestError as exc:
+            logger.info("vllm_draft_transport_failed err_type=%s", type(exc).__name__)
+            return None, "Draft model unavailable — try Generate response again."
         except (TypeError, ValueError, AttributeError, KeyError, IndexError) as exc:
             logger.info("vllm_draft_malformed err_type=%s", type(exc).__name__)
-            return None
+            return None, "Draft model returned empty or malformed content."
+        except Exception as exc:
+            logger.info("vllm_draft_unexpected err_type=%s", type(exc).__name__)
+            return None, "Draft unavailable — try Generate response again."
 
     def _reject_thread_parrot(
         self,
