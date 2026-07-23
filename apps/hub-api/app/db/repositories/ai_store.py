@@ -177,18 +177,20 @@ def index_chunks(
             embedding_dim=dim,
         )
         db.add(chunk)
-        # Also write native pgvector column if available (Postgres only; skipped on SQLite)
+        db.flush()
+        # Native pgvector column (Postgres). Use CAST() — `:vec::vector` breaks SQLAlchemy binds.
+        # SAVEPOINT so a vector write failure does not abort the JSON insert transaction.
         try:
             from sqlalchemy import text as sa_text
 
-            db.flush()
             vec_literal = "[" + ",".join(str(v) for v in emb) + "]"
-            db.execute(
-                sa_text(
-                    "UPDATE mail_chunks SET embedding_vec = :vec::vector WHERE id = :id"
-                ),
-                {"vec": vec_literal, "id": chunk.id},
-            )
+            with db.begin_nested():
+                db.execute(
+                    sa_text(
+                        "UPDATE mail_chunks SET embedding_vec = CAST(:vec AS vector) WHERE id = :id"
+                    ),
+                    {"vec": vec_literal, "id": chunk.id},
+                )
         except Exception:
             pass  # SQLite or pgvector not available — JSON fallback sufficient
         count += 1

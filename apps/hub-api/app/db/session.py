@@ -33,6 +33,10 @@ def get_engine() -> Engine:
             kwargs["connect_args"] = {"check_same_thread": False}
             if url in {"sqlite://", "sqlite:///:memory:"}:
                 kwargs["poolclass"] = StaticPool
+        else:
+            # Pool sized for parallel pre-compute workers (4) + API threads (4) + overhead
+            kwargs["pool_size"] = 8
+            kwargs["max_overflow"] = 4
         _engine = create_engine(url, **kwargs)
         if url.startswith("sqlite"):
 
@@ -58,9 +62,10 @@ def reset_engine() -> None:
 def init_db() -> None:
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
-    from app.db.schema_ensure import ensure_mailbox_history_columns
+    from app.db.schema_ensure import ensure_mailbox_history_columns, ensure_pgvector_column
 
     ensure_mailbox_history_columns(engine)
+    ensure_pgvector_column(engine)
 
 
 def get_db() -> Generator[Session, None, None]:

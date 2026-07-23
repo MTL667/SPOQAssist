@@ -200,6 +200,7 @@ export interface HistorySyncProgress {
   history_sync_phase: HistorySyncPhase;
   history_messages_fetched: number;
   history_messages_target: number;
+  history_sync_started_at?: string | null;
 }
 
 export async function syncMailboxIndex(params: {
@@ -225,7 +226,7 @@ export async function syncMailboxIndex(params: {
         Accept: "application/json",
       },
       body: JSON.stringify({
-        max_messages: params.maxMessages ?? 300,
+        max_messages: params.maxMessages ?? 3000,
         wait: params.wait ?? true,
       }),
     }
@@ -241,6 +242,7 @@ export async function syncMailboxIndex(params: {
     history_messages_fetched?: number;
     history_messages_target?: number;
     history_chunk_count?: number | null;
+    history_sync_started_at?: string | null;
   };
   return {
     indexed_count: data.indexed_count,
@@ -252,6 +254,7 @@ export async function syncMailboxIndex(params: {
     history_sync_phase: data.history_sync_phase ?? "not_started",
     history_messages_fetched: data.history_messages_fetched ?? 0,
     history_messages_target: data.history_messages_target ?? 0,
+    history_sync_started_at: data.history_sync_started_at ?? null,
   };
 }
 
@@ -276,6 +279,7 @@ export async function fetchMailboxProfile(params: {
     history_sync_phase?: HistorySyncPhase;
     history_messages_fetched?: number;
     history_messages_target?: number;
+    history_sync_started_at?: string | null;
   };
   return {
     history_status: data.history_status ?? "not_started",
@@ -284,6 +288,7 @@ export async function fetchMailboxProfile(params: {
     history_sync_phase: data.history_sync_phase ?? "not_started",
     history_messages_fetched: data.history_messages_fetched ?? 0,
     history_messages_target: data.history_messages_target ?? 0,
+    history_sync_started_at: data.history_sync_started_at ?? null,
   };
 }
 

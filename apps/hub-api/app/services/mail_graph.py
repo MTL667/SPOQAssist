@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 from urllib.parse import quote
@@ -110,6 +111,7 @@ class MailGraphClient(Protocol):
         mailbox_email: str,
         graph_mailbox_id: str | None,
         max_messages: int = 100,
+        on_progress: Callable[[int], None] | None = None,
     ) -> list[GraphMessage]: ...
 
 
@@ -221,6 +223,7 @@ class StubMailGraphClient:
         mailbox_email: str = "",
         graph_mailbox_id: str | None = None,
         max_messages: int = 100,
+        on_progress: Callable[[int], None] | None = None,
     ) -> list[GraphMessage]:
         del user_assertion, tenant_id, mailbox_kind, graph_mailbox_id
         sender = mailbox_email or "me@contoso.com"
@@ -241,7 +244,7 @@ class StubMailGraphClient:
                 "Thanks for the update. I have noted this on our side and will follow up.",
             ),
         ]
-        return [
+        out = [
             GraphMessage(
                 message_id=mid,
                 subject=subj,
@@ -250,6 +253,9 @@ class StubMailGraphClient:
             )
             for mid, subj, body in samples[: max(0, max_messages)]
         ]
+        if on_progress is not None:
+            on_progress(len(out))
+        return out
 
 
 class OboMailGraphClient:
@@ -578,6 +584,7 @@ class OboMailGraphClient:
         mailbox_email: str,
         graph_mailbox_id: str | None,
         max_messages: int = 100,
+        on_progress: Callable[[int], None] | None = None,
     ) -> list[GraphMessage]:
         token = self._acquire_obo_token(user_assertion=user_assertion, tenant_id=tenant_id)
         root = _mailbox_root(
@@ -585,20 +592,18 @@ class OboMailGraphClient:
             mailbox_email=mailbox_email,
             graph_mailbox_id=graph_mailbox_id,
         )
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Prefer": 'outlook.body-content-type="text"',
-        }
+        headers = {"Authorization": f"Bearer {token}"}
+        # bodyPreview only — full body per message makes 3000-item sync far too slow.
         page_size = min(50, max(1, max_messages))
         url: str | None = f"{root}/mailFolders/sentitems/messages"
         params: dict[str, str] | None = {
             "$top": str(page_size),
             "$orderby": "sentDateTime desc",
-            "$select": "id,subject,body,bodyPreview,from",
+            "$select": "id,subject,bodyPreview,from",
         }
         out: list[GraphMessage] = []
         try:
-            with httpx.Client(timeout=60.0) as client:
+            with httpx.Client(timeout=120.0) as client:
                 while url and len(out) < max_messages:
                     resp = client.get(url, headers=headers, params=params)
                     params = None  # nextLink already includes query string
@@ -617,14 +622,7 @@ class OboMailGraphClient:
                     for row in data.get("value") or []:
                         if len(out) >= max_messages:
                             break
-                        body_obj = row.get("body") or {}
-                        body = (
-                            str(body_obj.get("content") or "")
-                            if isinstance(body_obj, dict)
-                            else ""
-                        )
-                        if not body.strip():
-                            body = str(row.get("bodyPreview") or "")
+                        body = str(row.get("bodyPreview") or "")
                         frm = row.get("from") or {}
                         email_addr = (
                             (frm.get("emailAddress") or {}) if isinstance(frm, dict) else {}
@@ -637,6 +635,11 @@ class OboMailGraphClient:
                                 sender=str(email_addr.get("address") or mailbox_email),
                             )
                         )
+                    if on_progress is not None:
+                        try:
+                            on_progress(len(out))
+                        except Exception:
+                            logger.info("graph_list_sent_progress_callback_failed")
                     next_link = data.get("@odata.nextLink")
                     url = str(next_link) if next_link else None
         except AppError:

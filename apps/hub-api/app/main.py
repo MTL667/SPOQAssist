@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.actions import router as actions_router
 from app.api.admin_ai import router as admin_ai_router
 from app.api.admin_ops import router as admin_ops_router
 from app.api.analyze import router as analyze_router
@@ -21,13 +22,16 @@ configure_logging()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
+    from app.services.history_sync import recover_orphaned_syncing
+
+    recover_orphaned_syncing()
     yield
 
 
 app = FastAPI(
     title="SpoqSense Hub API",
-    version="0.2.0",
-    description="Local Mac Studio hub for SpoqSense (Epics 1–4).",
+    version="0.3.0",
+    description="SpoqSense Hub API — DGX Spark inference stack.",
     lifespan=lifespan,
 )
 
@@ -50,6 +54,7 @@ app.include_router(mailbox_profiles_router)
 app.include_router(analyze_router)
 app.include_router(feedback_router)
 app.include_router(confirm_router)
+app.include_router(actions_router)
 app.include_router(admin_ai_router)
 app.include_router(admin_ops_router)
 

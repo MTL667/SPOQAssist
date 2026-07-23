@@ -23,8 +23,8 @@ from app.services.mail_graph import get_mail_graph_client
 
 logger = logging.getLogger(__name__)
 
-BOOTSTRAP_MAX_MESSAGES = 300
-STALE_SYNCING_AFTER = timedelta(minutes=30)
+BOOTSTRAP_MAX_MESSAGES = 3000
+STALE_SYNCING_AFTER = timedelta(hours=3)
 
 _inflight_lock = threading.Lock()
 _inflight_profiles: set[str] = set()
@@ -66,6 +66,7 @@ def profile_history_snapshot(db: Session, mailbox_profile_id: str) -> dict:
             "history_messages_fetched": 0,
             "history_messages_target": 0,
         }
+    started = getattr(profile, "history_sync_started_at", None)
     return {
         "history_status": getattr(profile, "history_status", None)
         or HistoryProfileStatus.NOT_STARTED.value,
@@ -77,6 +78,7 @@ def profile_history_snapshot(db: Session, mailbox_profile_id: str) -> dict:
         "history_sync_phase": _phase_for_profile(profile),
         "history_messages_fetched": int(getattr(profile, "history_messages_fetched", 0) or 0),
         "history_messages_target": int(getattr(profile, "history_messages_target", 0) or 0),
+        "history_sync_started_at": started.isoformat() if started else None,
     }
 
 
@@ -116,10 +118,16 @@ def _mark_ready(db: Session, profile: MailboxProfile) -> None:
 
 
 def _mark_failed(db: Session, profile: MailboxProfile, message: str) -> None:
-    profile.history_status = HistoryProfileStatus.FAILED.value
-    profile.history_sync_error = (message or "History sync failed")[:512]
-    profile.history_sync_started_at = None
-    profile.history_sync_phase = HistorySyncPhase.FAILED.value
+    try:
+        db.rollback()
+    except Exception:
+        pass
+    # Re-load after rollback so we can persist failure even if the sync txn aborted.
+    fresh = mailbox_repo.get_profile(db, profile.id) or profile
+    fresh.history_status = HistoryProfileStatus.FAILED.value
+    fresh.history_sync_error = (message or "History sync failed")[:512]
+    fresh.history_sync_started_at = None
+    fresh.history_sync_phase = HistorySyncPhase.FAILED.value
     db.commit()
 
 
@@ -132,6 +140,51 @@ def _is_stale_syncing(profile: MailboxProfile) -> bool:
     if started.tzinfo is None:
         started = started.replace(tzinfo=timezone.utc)
     return _utcnow() - started > STALE_SYNCING_AFTER
+
+
+def _recover_orphaned_profile(db: Session, profile: MailboxProfile) -> None:
+    """Hub restart kills daemon sync threads; leave DB as ready/failed, not syncing."""
+    chunks = ai_store.count_chunks(db, profile.id)
+    if chunks > 0:
+        profile.history_status = HistoryProfileStatus.READY.value
+        profile.history_sync_phase = HistorySyncPhase.READY.value
+        profile.history_sync_error = None
+        profile.history_sync_started_at = None
+        profile.history_messages_fetched = max(
+            int(getattr(profile, "history_messages_fetched", 0) or 0),
+            chunks,
+        )
+    else:
+        profile.history_status = HistoryProfileStatus.FAILED.value
+        profile.history_sync_phase = HistorySyncPhase.FAILED.value
+        profile.history_sync_error = (profile.history_sync_error or "Sync interrupted")[:512]
+        profile.history_sync_started_at = None
+    db.commit()
+    logger.info(
+        "history_sync_orphaned_recovered mailbox_profile_id=%s chunks=%s status=%s",
+        profile.id,
+        chunks,
+        profile.history_status,
+    )
+
+
+def recover_orphaned_syncing() -> int:
+    """Call on hub startup — clear syncing rows left by dead background workers."""
+    from sqlalchemy import select
+
+    SessionLocal = _session_factory()
+    recovered = 0
+    with SessionLocal() as db:
+        profiles = list(db.execute(select(MailboxProfile)).scalars().all())
+        for profile in profiles:
+            if (profile.history_status or "") != HistoryProfileStatus.SYNCING.value:
+                continue
+            with _inflight_lock:
+                if profile.id in _inflight_profiles:
+                    continue
+            _recover_orphaned_profile(db, profile)
+            recovered += 1
+    return recovered
 
 
 def sync_sent_history(
@@ -160,6 +213,27 @@ def sync_sent_history(
     try:
         existing = ai_store.indexed_source_ids(db, mailbox_profile_id)
         client = get_mail_graph_client()
+
+        def _on_fetch_progress(fetched_so_far: int) -> None:
+            try:
+                db.refresh(profile)
+                _set_progress(
+                    db,
+                    profile,
+                    phase=HistorySyncPhase.FETCHING,
+                    messages_fetched=int(fetched_so_far),
+                    messages_target=max_messages,
+                )
+            except Exception:
+                logger.exception(
+                    "history_sync_fetch_progress_failed mailbox_profile_id=%s",
+                    mailbox_profile_id,
+                )
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+
         messages = client.list_sent_messages(
             user_assertion=user_assertion,
             tenant_id=tenant_id,
@@ -167,6 +241,7 @@ def sync_sent_history(
             mailbox_email=mailbox_email,
             graph_mailbox_id=graph_mailbox_id,
             max_messages=max_messages,
+            on_progress=_on_fetch_progress,
         )
         fetched = len(messages)
         _set_progress(
@@ -241,17 +316,44 @@ def sync_sent_history(
         )
         return count
     except AppError as exc:
-        db.refresh(profile)
+        chunks = ai_store.count_chunks(db, mailbox_profile_id)
+        if chunks > 0:
+            # Keep a usable index online; surface the error without failing the profile.
+            logger.exception(
+                "history_sync_app_error_kept_ready mailbox_profile_id=%s chunks=%s",
+                mailbox_profile_id,
+                chunks,
+            )
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            db.refresh(profile)
+            _mark_ready(db, profile)
+            profile.history_sync_error = (exc.message or type(exc).__name__)[:512]
+            db.commit()
+            return 0
         _mark_failed(db, profile, exc.message)
         raise
     except Exception as exc:
-        db.refresh(profile)
-        _mark_failed(db, profile, type(exc).__name__)
-        logger.info(
-            "history_sync_failed mailbox_profile_id=%s err_type=%s",
+        logger.exception(
+            "history_sync_failed mailbox_profile_id=%s err_type=%s err=%s",
             mailbox_profile_id,
             type(exc).__name__,
+            exc,
         )
+        chunks = ai_store.count_chunks(db, mailbox_profile_id)
+        if chunks > 0:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            db.refresh(profile)
+            _mark_ready(db, profile)
+            profile.history_sync_error = f"Refresh interrupted ({type(exc).__name__})"[:512]
+            db.commit()
+            return 0
+        _mark_failed(db, profile, type(exc).__name__)
         raise AppError(
             code="HISTORY_SYNC_FAILED",
             message="Could not refresh mailbox history profile.",
@@ -291,8 +393,10 @@ def request_history_sync(
     with _inflight_lock:
         if mailbox_profile_id in _inflight_profiles:
             return 0, False
-        if status == HistoryProfileStatus.SYNCING.value and not _is_stale_syncing(profile):
-            return 0, False
+        # DB says syncing but no live worker (hub restart) → recover, then allow a new sync.
+        if status == HistoryProfileStatus.SYNCING.value:
+            _recover_orphaned_profile(db, profile)
+            db.refresh(profile)
         _inflight_profiles.add(mailbox_profile_id)
 
     if wait:
@@ -331,7 +435,7 @@ def request_history_sync(
                 )
             except Exception:
                 # Status already marked failed inside sync_sent_history when possible.
-                logger.info(
+                logger.exception(
                     "history_sync_bg_failed mailbox_profile_id=%s",
                     mailbox_profile_id,
                 )

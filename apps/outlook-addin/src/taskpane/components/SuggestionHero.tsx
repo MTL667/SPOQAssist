@@ -1,6 +1,8 @@
 import React from "react";
 import { makeStyles, Text, Title3 } from "@fluentui/react-components";
 import type { SuggestionViewModel } from "../state/paneState";
+import { ActionsList } from "./ActionsList";
+import { AttachmentSummaries } from "./AttachmentSummaries";
 import { FeedbackControls } from "./FeedbackControls";
 import { WhyExplanation } from "./WhyExplanation";
 
@@ -34,6 +36,7 @@ export function SuggestionHero({
   onReject,
   onChangeRoute,
   onGenerateResponse,
+  onDismissAction,
 }: {
   suggestion: SuggestionViewModel;
   onAccept: () => void;
@@ -41,6 +44,7 @@ export function SuggestionHero({
   onReject: () => void;
   onChangeRoute: () => void;
   onGenerateResponse: () => void;
+  onDismissAction?: (actionId: string) => void;
 }): React.JSX.Element {
   const styles = useStyles();
   const action = primaryActionLabel(suggestion);
@@ -69,6 +73,8 @@ export function SuggestionHero({
           Limited sent history — draft may be generic.
         </Text>
       ) : null}
+      <ActionsList actions={suggestion.extractedActions} onDismiss={onDismissAction} />
+      <AttachmentSummaries summaries={suggestion.attachmentSummaries} />
       <WhyExplanation items={suggestion.why} />
       <FeedbackControls
         onAccept={onAccept}

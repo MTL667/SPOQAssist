@@ -163,8 +163,8 @@ yo office --projectType react --name "SpoqAssist" --host outlook --ts true
 - Entra JWT validation on hub; mailbox-profile authorization on every data/AI call
 - REST/OpenAPI; sync analyze with 10s/30s budgets; Confirm-outbound gate (FR37)
 - Microsoft Graph (delegated/OBO) as mail API path aligned with Entra tokens
-- No external LLM for mailbox content; inference on Mac Studio only
-- Tailscale for Studio ↔ client remote access
+- No external LLM for mailbox content; inference on DGX Spark only (NFR-S1)
+- Tailscale for DGX Spark ↔ client remote access
 
 **Important Decisions (Shape Architecture):**
 - Single Postgres for relational + pgvector embeddings + graph-as-tables
@@ -173,9 +173,15 @@ yo office --projectType react --name "SpoqAssist" --host outlook --ts true
 - Compose: api + db; inference host/sidecar; structured logs + /health
 - Light CI (lint/test/image); vertical scale for ~10 users
 
+**Decided (DGX Spark migration — see addendum):**
+- Postgres-backed priority queue for pre-compute (no Redis needed)
+- Dual-model routing: Qwen3.6-27B classify + Qwen3-72B draft via vLLM
+- Embedding upgrade: 4096-dim (Qwen3-Embedding-8B) with full reindex
+- Attachment processing pipeline (PDF, DOCX, vision model)
+- Action extraction from mail content
+
 **Deferred Decisions (Post-MVP):**
 - Optional web dashboard scaffold
-- Redis / heavy async job queue (unless batch prep demands it)
 - App-level field encryption of bodies
 - LoRA, autonomy, follow-up/archive/escalate
 - Neo4j or separate graph DB
@@ -211,8 +217,8 @@ yo office --projectType react --name "SpoqAssist" --host outlook --ts true
 | Style | REST + JSON; OpenAPI from FastAPI as contract |
 | Core flows | analyze → suggestion; feedback; confirm-outbound; GET /health |
 | Errors | Stable envelope: `code`, `message`, `retryable` |
-| Analyze mode | Sync with timeouts (≤10s classify/route; ≤30s draft); async jobs later for batch |
-| Inference | Hub → internal model runtime on Studio only; add-in never calls model directly |
+| Analyze mode | Sync with timeouts (≤2s classify; ≤8s draft on DGX Spark); pre-compute worker for background batch |
+| Inference | Hub → vLLM on DGX Spark only; add-in never calls model directly |
 | Docs | OpenAPI UI in non-prod; version prefix `/v1` |
 
 ### Frontend Architecture
@@ -230,42 +236,52 @@ yo office --projectType react --name "SpoqAssist" --host outlook --ts true
 
 | Decision | Choice |
 |----------|--------|
-| Host | Mac Studio, Docker Compose (`api`, `db`; inference host or sidecar) |
+| Host | **Nvidia DGX Spark** (128 GB, Blackwell, DGX OS/Linux ARM64), Docker Compose (`api`, `db`; vLLM as systemd services) |
 | DB image | `pgvector/pgvector` PG16, pin patch tag (e.g. `0.8.5-pg16`) |
-| Environments | `dev` + `studio` via env/secrets; AI path not on public cloud PaaS |
-| Remote access | **Tailscale** (Studio ↔ MacBooks) |
-| CI/CD | Light pipeline: lint/test + image build; reviewed deploy to Studio |
-| Observability | Structured logs (no PII), `/health` (+ later `/ready`), basic latency/error metrics |
+| Environments | `dev` + `dgx` via env/secrets; AI path not on public cloud PaaS |
+| Remote access | **Tailscale** (DGX Spark ↔ MacBooks) |
+| CI/CD | Light pipeline: lint/test + image build; reviewed deploy to DGX Spark |
+| Observability | Structured logs (no PII), `/health` + `/health/detail` (queue stats), Prometheus via vLLM |
 | Scale | Vertical for ~10 users; no multi-node requirement this release |
 
-### Local Model Stack (pinned)
+### Local Model Stack
+
+> **⚠️ Updated 2026-07-23** — migrated from Mac Studio / Ollama to DGX Spark / vLLM.
+> Full details: `architecture-dgx-spark-addendum.md`
 
 | Role | Choice | Notes |
 |------|--------|-------|
-| Runtime | **Ollama** on Mac Studio **host** (not inside `api` container) | Hub calls `http://host.docker.internal` / Studio localhost; keeps Metal/GPU simple for pilot |
-| Instruct (draft / complex gen) | **Qwen3 14B Instruct** via Ollama (pull tag documented in `apps/hub-api` README at implement time, e.g. `qwen3:14b`) | Used only when draft/generation needed |
-| Rerank / fast path | **Qwen3-Reranker-0.6B** | Classify/route/priority retrieve-rank path; keeps 14B off the hot path |
-| Embeddings | **Qwen3-Embedding-0.6B** | Same Qwen3 family; multilingual + NL mail |
-| pgvector dimension | **`vector(1024)`** | Native max dim for 0.6B embedding model; fixed in Alembic — do not change without reindex |
-| Network | Inference reachable only on Studio/Tailscale; never exposed publicly; add-in never calls Ollama | NFR-S1 |
+| Runtime | **vLLM** (≥0.13, CUDA 13.0, systemd services) on DGX Spark | OpenAI-compatible `/v1/chat/completions`; replaces Ollama |
+| Classify / triage | **Qwen3.6-27B** (port 8001) | Pre-compute path: <2s/mail; 262K context |
+| Draft / deep analysis | **Qwen3-72B** (port 8002) | On-demand: 5-8s; complex NL drafts |
+| Embeddings | **Qwen3-Embedding-8B** (port 8003) | 4096-dim dense; MRL truncation if needed |
+| Reranker | **Qwen3-Reranker-4B** (port 8003) | Instruction-aware, 100+ languages |
+| Vision (lazy-load) | **TBD ~7B VL model** (port 8004) | Only loaded when scan/image attachment present |
+| pgvector dimension | **`vector(4096)`** | Upgraded from 1024; existing chunks re-embedded via management command |
+| Network | Inference reachable only on DGX Spark/Tailscale; never exposed publicly; add-in never calls vLLM | NFR-S1 |
+| Batch strategy | **Hybrid**: pre-compute on mail arrival (27B) + on-demand draft (72B) | Priority queue: user-opened > recent > retry |
 
-**Change control:** Changing embedding dim or embedding model requires a new migration + full reindex story. Changing instruct/reranker tags is config-only if API contracts stay stable.
+**Backward compatibility:** `INFERENCE_MODE=ollama` still supported for fallback/dev. Config-driven: swap `INFERENCE_MODE=vllm` to activate DGX Spark stack.
+
+**Change control:** Changing embedding dim or embedding model requires `python -m app.management.reembed` (full reindex). Changing instruct/reranker models is config-only if API contracts stay stable (OpenAI-compatible format preserved).
 
 ### Decision Impact Analysis
 
 **Implementation Sequence:**
-1. Repo layout + Compose (db + api skeleton) + Alembic
-2. Yo Office Outlook add-in scaffold + Fluent theme tokens
-3. Entra app registration(s) + JWT validation + mailbox authZ middleware
-4. Graph mail read path (single mailbox E2E)
-5. Inference wiring (reranker-first + instruct for draft)
-6. Analyze/feedback/confirm-outbound APIs + audit
-7. Tailscale + studio deploy + health/runbook
+1. ~~Repo layout + Compose (db + api skeleton) + Alembic~~ ✅ Done
+2. ~~Yo Office Outlook add-in scaffold + Fluent theme tokens~~ ✅ Done
+3. ~~Entra app registration(s) + JWT validation + mailbox authZ middleware~~ ✅ Done
+4. ~~Graph mail read path (single mailbox E2E)~~ ✅ Done
+5. ~~Inference wiring (reranker-first + instruct for draft)~~ ✅ Done
+6. ~~Analyze/feedback/confirm-outbound APIs + audit~~ ✅ Done
+7. ~~Tailscale + studio deploy + health/runbook~~ ✅ Done
+8. **DGX Spark migration** — vLLM dual-model, 4096-dim embeddings, pre-compute worker, attachments, actions (see `epics-dgx-spark-migration.md`)
 
 **Cross-Component Dependencies:**
 - Entra JWT choice drives Graph OBO and forbids client-held long-lived mail secrets
 - Postgres-only graph means routing “learn” updates are SQL transactions + embedding refresh
-- Sync analyze + latency NFRs constrain inference placement (same Studio, warm models)
+- Pre-compute worker + latency NFRs constrain inference placement (same DGX Spark, warm models via vLLM)
+- Embedding dim (4096) must match between index_chunks, retrieve_similar, and re-embed job
 - Confirm-outbound + idempotency keys couple API, mail send, and audit tables
 - Tailscale is prerequisite for WFH clients reaching hub without exposing inference publicly
 

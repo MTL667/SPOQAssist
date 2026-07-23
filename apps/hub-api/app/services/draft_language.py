@@ -207,24 +207,28 @@ def is_thread_parrot(
     thread_context: str,
     style_snippets: list[str],
 ) -> bool:
-    """True if draft pastes a distinctive phrase from quoted history/style."""
+    """True if draft pastes a distinctive phrase from the incoming/quoted thread.
+
+    Style snippets are intentionally excluded: the draft prompt asks the model to
+    match the owner's Sent tone, so short overlaps with style examples are expected
+    and must not wipe an otherwise usable reply.
+    """
+    del style_snippets  # kept in signature for call-site compatibility
     if not (draft or "").strip():
         return False
-    haystacks = [thread_context or ""] + list(style_snippets or [])
-    blob = _normalize_for_parrot("\n".join(haystacks))
+    blob = _normalize_for_parrot(thread_context or "")
     if len(blob) < 20:
         return False
     norm_draft = _normalize_for_parrot(draft)
     words = norm_draft.split()
-    # Longer n-grams first; also catch shorter distinctive 18+ char pastes.
-    # Always skip common openers/closers so shared groeten do not wipe good replies.
+    # Longer n-grams first. Keep the bar high so short topical overlaps with the
+    # thread (common in real replies) do not wipe an otherwise usable draft.
     for i in range(len(words)):
-        for width in (8, 7, 6, 5, 4):
+        for width in (8, 7, 6):
             if i + width > len(words):
                 continue
             phrase = " ".join(words[i : i + width])
-            min_len = 28 if width >= 6 else 18
-            if len(phrase) < min_len:
+            if len(phrase) < 36:
                 continue
             if is_boilerplate_parrot_phrase(phrase):
                 continue

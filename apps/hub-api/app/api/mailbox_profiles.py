@@ -60,6 +60,7 @@ def _to_out(profile, db=None) -> MailboxProfileOut:  # type: ignore[no-untyped-d
         history_sync_phase=snap.get("history_sync_phase") or HistorySyncPhase.NOT_STARTED,
         history_messages_fetched=int(snap.get("history_messages_fetched") or 0),
         history_messages_target=int(snap.get("history_messages_target") or 0),
+        history_sync_started_at=snap.get("history_sync_started_at"),
     )
 
 
