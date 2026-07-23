@@ -68,6 +68,19 @@ const useStyles = makeStyles({
   profileBusy: { color: "#5B6B73", marginTop: "8px" },
 });
 
+function formatElapsedSec(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return "";
+  if (seconds < 10) return `${seconds.toFixed(1)}s`;
+  return `${Math.round(seconds)}s`;
+}
+
+function elapsedSinceIso(iso: string | null | undefined, nowMs: number): number | null {
+  if (!iso) return null;
+  const started = Date.parse(iso);
+  if (!Number.isFinite(started)) return null;
+  return Math.max(0, (nowMs - started) / 1000);
+}
+
 function historyProfileLabel(params: {
   status: HistoryProfileStatus;
   phase: HistorySyncPhase;
@@ -76,6 +89,7 @@ function historyProfileLabel(params: {
   messagesFetched: number;
   messagesTarget: number;
   chunkCount: number | null;
+  elapsedSec?: number | null;
 }): string {
   const {
     status,
@@ -85,29 +99,32 @@ function historyProfileLabel(params: {
     messagesFetched,
     messagesTarget,
     chunkCount,
+    elapsedSec,
   } = params;
+  const elapsed = formatElapsedSec(elapsedSec);
+  const withTime = (label: string) => (elapsed ? `${label} · ${elapsed}` : label);
   if (!signedIn) {
     return "Sign in to build or refresh the mailbox profile.";
   }
   if (status === "failed" || phase === "failed") {
     return err
-      ? `Profiel bijwerken mislukt: ${err}`
-      : "Profiel bijwerken mislukt — eerdere geschiedenis blijft bruikbaar.";
+      ? withTime(`Profiel bijwerken mislukt: ${err}`)
+      : withTime("Profiel bijwerken mislukt — eerdere geschiedenis blijft bruikbaar.");
   }
   // Prefer lifecycle status over a stale/default phase after schema add.
   if (status === "ready") {
     return "Mailbox-profiel klaar";
   }
   if (status === "not_started" && phase === "not_started") {
-    return "1/4 Profiel starten…";
+    return withTime("1/4 Profiel starten…");
   }
   if (phase === "fetching" || (status === "syncing" && phase !== "indexing")) {
     const target = messagesTarget > 0 ? messagesTarget : "…";
-    return `2/4 Sent-berichten ophalen (${messagesFetched}/${target})`;
+    return withTime(`2/4 Sent-berichten ophalen (${messagesFetched}/${target})`);
   }
   if (phase === "indexing" || status === "syncing") {
     const chunks = chunkCount ?? 0;
-    return `3/4 Chunks indexeren (${chunks} chunks)`;
+    return withTime(`3/4 Chunks indexeren (${chunks} chunks)`);
   }
   return "Mailbox-profiel klaar";
 }
@@ -145,6 +162,12 @@ export function App(): React.JSX.Element {
   const [historyMessagesFetched, setHistoryMessagesFetched] = useState(0);
   const [historyMessagesTarget, setHistoryMessagesTarget] = useState(0);
   const [historyChunkCount, setHistoryChunkCount] = useState<number | null>(null);
+  const [historySyncStartedAt, setHistorySyncStartedAt] = useState<string | null>(null);
+  const [syncElapsedSec, setSyncElapsedSec] = useState<number | null>(null);
+  const [lastAnalyzeSec, setLastAnalyzeSec] = useState<number | null>(null);
+  const [lastAnalyzeTimings, setLastAnalyzeTimings] = useState<Record<string, number> | null>(
+    null
+  );
   const [needsSignIn, setNeedsSignIn] = useState(false);
   const [ssoError, setSsoError] = useState<SsoErrorInfo | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -173,6 +196,7 @@ export function App(): React.JSX.Element {
       history_messages_target?: number;
       history_chunk_count?: number | null;
       total_chunks?: number | null;
+      history_sync_started_at?: string | null;
     }) => {
       const status = snap.history_status;
       let phase = snap.history_sync_phase ?? "not_started";
@@ -185,8 +209,12 @@ export function App(): React.JSX.Element {
       setHistoryMessagesTarget(snap.history_messages_target ?? 0);
       const chunks = snap.history_chunk_count ?? snap.total_chunks ?? null;
       setHistoryChunkCount(chunks);
+      const startedAt = snap.history_sync_started_at ?? null;
+      setHistorySyncStartedAt(startedAt);
+      setSyncElapsedSec(elapsedSinceIso(startedAt, Date.now()));
       if (status === "ready" || status === "failed") {
         bootstrapDoneRef.current = true;
+        setHistorySyncStartedAt(null);
       }
       return { status, phase, chunkCount: chunks };
     },
@@ -259,7 +287,7 @@ export function App(): React.JSX.Element {
           return syncMailboxIndex({
             token,
             mailboxProfileId: profileId,
-            maxMessages: 300,
+            maxMessages: 3000,
             wait: false,
           });
         })
@@ -459,6 +487,9 @@ export function App(): React.JSX.Element {
     }
     setState("analyzing");
     clearSuggestion();
+    setLastAnalyzeSec(null);
+    setLastAnalyzeTimings(null);
+    const analyzeStarted = performance.now();
     try {
       const api = await analyzeMessage({
         token: session.token,
@@ -470,6 +501,12 @@ export function App(): React.JSX.Element {
         attachmentNames: mail.attachmentNames,
       });
       if (seq !== analyzeSeq.current) return;
+      const wallSec = (performance.now() - analyzeStarted) / 1000;
+      const totalMs = api.timings?.total_ms;
+      setLastAnalyzeSec(
+        typeof totalMs === "number" && totalMs > 0 ? totalMs / 1000 : wallSec
+      );
+      setLastAnalyzeTimings(api.timings ?? null);
       const vm = mapSuggestion(api);
       setSuggestion(vm);
       setEditDraft(vm.draft || "");
@@ -494,6 +531,7 @@ export function App(): React.JSX.Element {
               attachmentNames: mail!.attachmentNames,
             });
             if (seq !== analyzeSeq.current) return;
+            setLastAnalyzeSec((performance.now() - analyzeStarted) / 1000);
             const vm = mapSuggestion(api);
             setSuggestion(vm);
             setEditDraft(vm.draft || "");
@@ -504,6 +542,7 @@ export function App(): React.JSX.Element {
           }
         }
       }
+      setLastAnalyzeSec((performance.now() - analyzeStarted) / 1000);
       setSuggestion(null);
       if (/401|unauthor|auth/i.test(msg)) {
         setNeedsSignIn(true);
@@ -527,6 +566,16 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     void checkHub();
   }, [checkHub]);
+
+  useEffect(() => {
+    if (historyStatus !== "syncing" || !historySyncStartedAt) {
+      return;
+    }
+    const tick = () => setSyncElapsedSec(elapsedSinceIso(historySyncStartedAt, Date.now()));
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [historyStatus, historySyncStartedAt]);
 
   useEffect(() => {
     return () => stopHistoryPoll();
@@ -667,8 +716,26 @@ export function App(): React.JSX.Element {
           messagesFetched: historyMessagesFetched,
           messagesTarget: historyMessagesTarget,
           chunkCount: historyChunkCount,
+          elapsedSec: syncElapsedSec,
         })}
       </Text>
+      {lastAnalyzeSec != null ? (
+        <Text className={styles.meta} block aria-live="polite">
+          Laatste analyze: {formatElapsedSec(lastAnalyzeSec)}
+          {lastAnalyzeTimings
+            ? (() => {
+                const stages: { key: string; ms: number }[] = [
+                  { key: "graph", ms: lastAnalyzeTimings.graph_ms ?? 0 },
+                  { key: "retrieve", ms: lastAnalyzeTimings.retrieve_ms ?? 0 },
+                  { key: "classify", ms: lastAnalyzeTimings.classify_ms ?? 0 },
+                  { key: "draft", ms: lastAnalyzeTimings.draft_ms ?? 0 },
+                ];
+                const dominant = stages.reduce((a, b) => (b.ms > a.ms ? b : a), stages[0]);
+                return ` — slowste: ${dominant.key} ${formatElapsedSec(dominant.ms / 1000)} (classify ${formatElapsedSec((lastAnalyzeTimings.classify_ms ?? 0) / 1000)}, draft ${formatElapsedSec((lastAnalyzeTimings.draft_ms ?? 0) / 1000)})`;
+              })()
+            : ""}
+        </Text>
+      ) : null}
 
       {needsSignIn ? (
         <SignInPanel

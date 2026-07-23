@@ -13,22 +13,31 @@ const useStyles = makeStyles({
 
 export function AnalyzingState(): React.JSX.Element {
   const styles = useStyles();
-  const [slow, setSlow] = useState(false);
+  const [elapsedSec, setElapsedSec] = useState(0);
   const reduceMotion =
     typeof window !== "undefined" &&
     window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
   useEffect(() => {
-    const t = window.setTimeout(() => setSlow(true), 4000);
-    return () => window.clearTimeout(t);
+    const started = performance.now();
+    const id = window.setInterval(() => {
+      setElapsedSec((performance.now() - started) / 1000);
+    }, 250);
+    return () => window.clearInterval(id);
   }, []);
+
+  const label =
+    elapsedSec < 10 ? `${elapsedSec.toFixed(1)}s` : `${Math.round(elapsedSec)}s`;
 
   return (
     <div className={styles.root} aria-live="polite" aria-busy="true">
-      <Spinner label="Analyzing message…" appearance={reduceMotion ? "primary" : undefined} />
-      {slow ? (
+      <Spinner
+        label={`Analyzing message… ${label}`}
+        appearance={reduceMotion ? "primary" : undefined}
+      />
+      {elapsedSec >= 4 ? (
         <Text className={styles.hint} block>
-          Still working…
+          Still working… {label}
         </Text>
       ) : null}
     </div>

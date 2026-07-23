@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.db.repositories import ai_store
-from app.domain.enums import Confidence, MailboxKind
+from app.domain.enums import Confidence, HistoryStatus, MailboxKind
 from app.domain.models import Suggestion
 from app.domain.schemas import (
     AnalyzeRequest,
@@ -16,7 +19,7 @@ from app.domain.schemas import (
     SuggestionOut,
     WhyItem,
 )
-from app.services.inference import get_inference_client
+from app.services.inference import AnalyzeSignals, get_inference_client
 from app.services.learning import pattern_key_from_sender
 from app.services.mail_read import load_message_for_analyze
 from app.services.retrieve import lookup_learned_route, retrieve_similar
@@ -34,6 +37,7 @@ SUPPORTED_ATTACHMENT_SUFFIXES = {
     ".jpeg",
     ".csv",
 }
+PRECOMPUTE_MAX_AGE = timedelta(hours=2)
 
 
 def _attachment_warnings(
@@ -62,6 +66,68 @@ def _attachment_warnings(
     return warnings
 
 
+def _ms_since(start: float) -> int:
+    return max(0, int((time.perf_counter() - start) * 1000))
+
+
+def get_fresh_precomputed_suggestion(
+    db: Session,
+    *,
+    mailbox_profile_id: str,
+    message_id: str,
+) -> Suggestion | None:
+    """Latest precompute classify row for this message, if still fresh."""
+    row = db.execute(
+        select(Suggestion)
+        .where(
+            Suggestion.mailbox_profile_id == mailbox_profile_id,
+            Suggestion.message_id == message_id,
+            Suggestion.created_by_oid == "system:precompute",
+        )
+        .order_by(Suggestion.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    created = row.created_at
+    if created is None:
+        return None
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if created > now or now - created > PRECOMPUTE_MAX_AGE:
+        return None
+    return row
+
+
+def _signals_from_suggestion(row: Suggestion) -> AnalyzeSignals:
+    try:
+        why = json.loads(row.why_json or "[]")
+        if not isinstance(why, list):
+            why = []
+        why = [item for item in why if isinstance(item, dict)]
+    except json.JSONDecodeError:
+        why = []
+    try:
+        hist = HistoryStatus(row.history_status or HistoryStatus.NONE.value)
+    except ValueError:
+        hist = HistoryStatus.NONE
+    try:
+        conf = Confidence(row.confidence or Confidence.MEDIUM.value)
+    except ValueError:
+        conf = Confidence.MEDIUM
+    return AnalyzeSignals(
+        category=row.category or "fyi",
+        priority=row.priority or "normal",
+        confidence=conf,
+        route_email=row.suggested_route_email,
+        route_name=row.suggested_route_name,
+        why=why,
+        draft=None,
+        history_status=hist,
+    )
+
+
 def run_analyze(
     db: Session,
     *,
@@ -85,7 +151,17 @@ def run_analyze(
                 retryable=False,
             )
 
+    total_start = time.perf_counter()
+    timings: dict[str, int] = {
+        "graph_ms": 0,
+        "retrieve_ms": 0,
+        "classify_ms": 0,
+        "draft_ms": 0,
+        "total_ms": 0,
+    }
+
     client = get_inference_client()
+    t0 = time.perf_counter()
     loaded = load_message_for_analyze(
         user_assertion=user_assertion,
         tenant_id=tenant_id,
@@ -98,6 +174,7 @@ def run_analyze(
         fallback_sender=body.sender,
         attachment_names=body.attachment_names,
     )
+    timings["graph_ms"] = _ms_since(t0)
     logger.info(
         "analyze_start mailbox_profile_id=%s message_id=%s",
         mailbox_profile_id,
@@ -108,14 +185,17 @@ def run_analyze(
     from app.services.thread_split import split_thread_body
 
     parts = split_thread_body(loaded.body)
-    # Weight the latest ask first; include a short thread slice for topic background.
     thread_tail = (parts.thread_context or "")[:800]
     query = (
         f"{loaded.subject}\n{parts.latest_message}\n{loaded.sender}\n{thread_tail}"
     )
+
+    t0 = time.perf_counter()
     snippets = retrieve_similar(
         db, mailbox_profile_id=mailbox_profile_id, query_text=query, client=client
     )
+    timings["retrieve_ms"] = _ms_since(t0)
+
     learned = lookup_learned_route(
         db,
         mailbox_profile_id=mailbox_profile_id,
@@ -129,7 +209,6 @@ def run_analyze(
         try:
             profile = mailbox_repo.get_profile(db, mailbox_profile_id)
             if profile is not None:
-                # Grounded fill only — never a per-draft 14B summary regeneration.
                 behavior_summary = ensure_cached_summary(db, profile, allow_llm=False)
         except Exception:
             logger.info(
@@ -141,20 +220,75 @@ def run_analyze(
             except Exception:
                 pass
             behavior_summary = None
-    signals = client.analyze_fast(
-        subject=loaded.subject,
-        body=loaded.body,
-        sender=loaded.sender,
-        mailbox_email=mailbox_email,
-        retrieved_snippets=snippets,
-        learned_route=learned,
-        include_draft=body.include_draft,
-        behavior_summary=behavior_summary,
-    )
 
-    route_email = signals.route_email
-    route_name = signals.route_name
-    # Frozen product rule: Contoso never surfaces as a suggested route to the add-in.
+    cached = get_fresh_precomputed_suggestion(
+        db,
+        mailbox_profile_id=mailbox_profile_id,
+        message_id=message_id,
+    )
+    precompute_status = "miss"
+    classification: AnalyzeSignals | None = None
+    if cached is not None:
+        precompute_status = "hit"
+        classification = _signals_from_suggestion(cached)
+        classification.why = list(classification.why) + [
+            {
+                "code": "precompute_cache",
+                "text": "Classification reused from fresh precompute cache.",
+            }
+        ]
+
+    t0 = time.perf_counter()
+    if classification is not None:
+        signals = classification
+        # Refresh history readiness from live retrieval — precompute may have run
+        # before Sent index existed.
+        if len(snippets) >= 2:
+            signals.history_status = HistoryStatus.SUFFICIENT
+        elif snippets:
+            signals.history_status = HistoryStatus.LIMITED
+        timings["classify_ms"] = 0
+    else:
+        signals = client.analyze_fast(
+            subject=loaded.subject,
+            body=loaded.body,
+            sender=loaded.sender,
+            mailbox_email=mailbox_email,
+            retrieved_snippets=snippets,
+            learned_route=learned,
+            include_draft=False,
+            behavior_summary=behavior_summary,
+        )
+        timings["classify_ms"] = _ms_since(t0)
+
+    try:
+        from app.services.precompute import boost_priority
+
+        boost_priority(
+            db,
+            mailbox_profile_id=mailbox_profile_id,
+            message_id=message_id,
+        )
+    except Exception:
+        logger.info("precompute_boost_skipped mailbox_profile_id=%s", mailbox_profile_id)
+
+    if body.include_draft:
+        t0 = time.perf_counter()
+        signals = client.analyze_fast(
+            subject=loaded.subject,
+            body=loaded.body,
+            sender=loaded.sender,
+            mailbox_email=mailbox_email,
+            retrieved_snippets=snippets,
+            learned_route=learned,
+            include_draft=True,
+            behavior_summary=behavior_summary,
+            classification=signals,
+        )
+        timings["draft_ms"] = _ms_since(t0)
+
+    route_email = signals.route_email if isinstance(signals.route_email, str) else None
+    route_name = signals.route_name if isinstance(signals.route_name, str) else None
     if route_email and "@contoso.com" in route_email.lower():
         route_email, route_name = None, None
 
@@ -184,12 +318,21 @@ def run_analyze(
             display_name=suggestion.suggested_route_name,
         )
 
-    # Forward only when a real route exists (learned edge) — never invented recipients.
     actions: list[str] = []
     if suggestion.draft:
         actions.append("reply")
     if route:
         actions.append("forward")
+
+    timings["total_ms"] = _ms_since(total_start)
+    logger.info(
+        "analyze_done mailbox_profile_id=%s total_ms=%s classify_ms=%s draft_ms=%s precompute=%s",
+        mailbox_profile_id,
+        timings["total_ms"],
+        timings["classify_ms"],
+        timings["draft_ms"],
+        precompute_status,
+    )
 
     return SuggestionOut(
         suggestion_id=suggestion.id,
@@ -204,4 +347,6 @@ def run_analyze(
         history_status=signals.history_status,
         attachment_warnings=warnings,
         actions=actions,
+        precompute_status=precompute_status,
+        timings=timings,
     )

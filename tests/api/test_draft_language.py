@@ -46,9 +46,16 @@ def test_parrot_rejects_long_verbatim_owner_line():
     assert is_thread_parrot(draft, thread_context=thread, style_snippets=[])
 
 
-def test_parrot_rejects_short_distinctive_18_char_paste():
-    distinctive = "laptop al besteld hier"
-    assert len(distinctive) >= 18
+def test_parrot_rejects_long_six_word_paste():
+    distinctive = "we hebben de laptop al besteld vandaag"
+    assert len(distinctive) >= 36
     draft = f"Dag Jean,\n\n{distinctive}\n\nMet vriendelijke groet"
     thread = f"-----Original Message-----\n{distinctive}\nKevin\n"
     assert is_thread_parrot(draft, thread_context=thread, style_snippets=[])
+
+
+def test_parrot_allows_short_topical_overlap():
+    distinctive = "laptop al besteld hier"
+    draft = f"Dag Jean,\n\n{distinctive}\n\nMet vriendelijke groet"
+    thread = f"-----Original Message-----\n{distinctive}\nKevin\n"
+    assert not is_thread_parrot(draft, thread_context=thread, style_snippets=[])

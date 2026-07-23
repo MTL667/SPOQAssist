@@ -62,6 +62,14 @@
 - RoutePicker listbox a11y roles/keyboard — polish later
 - Prompt-injection hardening for instruct drafts — broader inference security pass
 
+## Deferred from: spec-analyze-latency-under-10s review (2026-07-23)
+
+- `_embedding_dim` global cache has no invalidation when switching inference modes
+- Shared inference client mutable `_attachment_context` is not request-scoped
+- Permanent process-level `_reranker_disabled` after 404 has no TTL/recovery without restart
+- Guaranteed ≤10s under all load still needs a smaller dedicated draft model or true precompute worker in production
+- Broader HTTP contract tests for `timings` population end-to-end (unit coverage added)
+
 ## Deferred from: code review of epics.md (2026-07-22)
 
 - Embeddings stored as JSON text, not Postgres `vector(1024)` — pilot/sqlite compatibility

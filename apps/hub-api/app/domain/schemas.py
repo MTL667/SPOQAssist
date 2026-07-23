@@ -31,6 +31,7 @@ class MailboxProfileOut(BaseModel):
     history_sync_phase: HistorySyncPhase = HistorySyncPhase.NOT_STARTED
     history_messages_fetched: int = 0
     history_messages_target: int = 0
+    history_sync_started_at: str | None = None
 
 
 class ConnectMailboxRequest(BaseModel):
@@ -110,6 +111,7 @@ class SuggestionOut(BaseModel):
     actions: list[str] = Field(default_factory=list)
     extracted_actions: list[ActionItem] = Field(default_factory=list)
     precompute_status: str | None = None
+    timings: dict[str, int] = Field(default_factory=dict)
 
 
 class AnalyzeRequest(BaseModel):
@@ -162,7 +164,7 @@ class IndexRequest(BaseModel):
 
 
 class SyncIndexRequest(BaseModel):
-    max_messages: int = Field(default=300, ge=1, le=300)
+    max_messages: int = Field(default=3000, ge=1, le=3000)
     # False = start background sync and return immediately (Outlook open path).
     wait: bool = True
 
@@ -179,6 +181,7 @@ class IndexResponse(BaseModel):
     history_sync_phase: HistorySyncPhase = HistorySyncPhase.NOT_STARTED
     history_messages_fetched: int = 0
     history_messages_target: int = 0
+    history_sync_started_at: str | None = None
 
 
 class SharedAiSettingsIn(BaseModel):

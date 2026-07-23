@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     spoq_log_level: str = "INFO"
     database_url: str = "postgresql+psycopg://spoq:spoq_dev_change_me@localhost:5432/spoqassist"
     ollama_base_url: str = "http://host.docker.internal:11434"
-    # stub | ollama
+    # stub | ollama | vllm
     inference_mode: str = Field(default="stub", validation_alias="INFERENCE_MODE")
     ollama_embed_model: str = Field(
         default="qwen3-embedding:0.6b", validation_alias="OLLAMA_EMBED_MODEL"
@@ -29,6 +29,44 @@ class Settings(BaseSettings):
     )
     ollama_instruct_model: str = Field(
         default="qwen3:14b", validation_alias="OLLAMA_INSTRUCT_MODEL"
+    )
+
+    # vLLM (OpenAI-compatible) — separate services per model role
+    vllm_classify_url: str = Field(
+        default="http://localhost:8001/v1", validation_alias="VLLM_CLASSIFY_URL"
+    )
+    vllm_draft_url: str = Field(
+        default="http://localhost:8002/v1", validation_alias="VLLM_DRAFT_URL"
+    )
+    vllm_embed_url: str = Field(
+        default="http://localhost:8003/v1", validation_alias="VLLM_EMBED_URL"
+    )
+    vllm_classify_model: str = Field(
+        default="Qwen/Qwen3.6-27B", validation_alias="VLLM_CLASSIFY_MODEL"
+    )
+    vllm_draft_model: str = Field(
+        default="Qwen/Qwen3-72B", validation_alias="VLLM_DRAFT_MODEL"
+    )
+    vllm_embed_model: str = Field(
+        default="Qwen/Qwen3-Embedding-8B", validation_alias="VLLM_EMBED_MODEL"
+    )
+    vllm_vision_url: str = Field(
+        default="http://localhost:8004/v1", validation_alias="VLLM_VISION_URL"
+    )
+    vllm_vision_model: str = Field(
+        default="Qwen/Qwen2.5-VL-7B", validation_alias="VLLM_VISION_MODEL"
+    )
+    vllm_reranker_model: str = Field(
+        default="Qwen/Qwen3-Reranker-4B", validation_alias="VLLM_RERANKER_MODEL"
+    )
+    vllm_reranker_url: str = Field(
+        default="http://localhost:8004/v1", validation_alias="VLLM_RERANKER_URL"
+    )
+    vllm_draft_timeout: float = Field(
+        default=12.0, validation_alias="VLLM_DRAFT_TIMEOUT"
+    )
+    vllm_classify_timeout: float = Field(
+        default=8.0, validation_alias="VLLM_CLASSIFY_TIMEOUT"
     )
 
     # Multi-entity Entra: JSON list OR comma-separated tenant IDs + shared audience.
@@ -66,6 +104,14 @@ class Settings(BaseSettings):
         "ollama_embed_model",
         "ollama_rerank_model",
         "ollama_instruct_model",
+        "vllm_classify_url",
+        "vllm_draft_url",
+        "vllm_embed_url",
+        "vllm_reranker_url",
+        "vllm_classify_model",
+        "vllm_draft_model",
+        "vllm_embed_model",
+        "vllm_reranker_model",
         mode="before",
     )
     @classmethod

@@ -1,4 +1,9 @@
-import type { SuggestionOut, SuggestionViewModel } from "../state/paneState";
+import type {
+  ActionItemViewModel,
+  AttachmentSummaryViewModel,
+  SuggestionOut,
+  SuggestionViewModel,
+} from "../state/paneState";
 
 /** snake_case API → camelCase UI view model */
 export function mapSuggestion(api: SuggestionOut): SuggestionViewModel {
@@ -22,6 +27,25 @@ export function mapSuggestion(api: SuggestionOut): SuggestionViewModel {
       name: w.name,
       reason: w.reason,
     })),
+    attachmentSummaries: (api.attachment_summaries || []).map(
+      (a): AttachmentSummaryViewModel => ({
+        filename: a.filename,
+        summary: a.summary,
+        pageCount: a.page_count ?? null,
+        isScan: a.is_scan ?? false,
+      })
+    ),
     actions: api.actions || [],
+    extractedActions: (api.extracted_actions || []).map(
+      (a): ActionItemViewModel => ({
+        id: a.id ?? null,
+        actionType: a.action_type,
+        description: a.description,
+        dueDate: a.due_date ?? null,
+        dismissed: a.dismissed ?? false,
+      })
+    ),
+    precomputeStatus: api.precompute_status ?? null,
+    timings: api.timings ?? {},
   };
 }
