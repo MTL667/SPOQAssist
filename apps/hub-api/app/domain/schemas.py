@@ -8,6 +8,7 @@ from app.domain.enums import (
     FeedbackOutcome,
     HistoryProfileStatus,
     HistoryStatus,
+    HistorySyncPhase,
     MailboxKind,
     MailboxRole,
     OutboundAction,
@@ -27,6 +28,9 @@ class MailboxProfileOut(BaseModel):
     last_history_sync_at: str | None = None
     history_sync_error: str | None = None
     history_chunk_count: int | None = None
+    history_sync_phase: HistorySyncPhase = HistorySyncPhase.NOT_STARTED
+    history_messages_fetched: int = 0
+    history_messages_target: int = 0
 
 
 class ConnectMailboxRequest(BaseModel):
@@ -74,6 +78,22 @@ class AttachmentWarning(BaseModel):
     reason: str
 
 
+class ActionItem(BaseModel):
+    id: str | None = None
+    action_type: str  # deadline | todo | meeting | question
+    description: str
+    due_date: str | None = None
+    dismissed: bool = False
+
+
+class AttachmentSummary(BaseModel):
+    filename: str
+    mime_type: str
+    summary: str
+    page_count: int | None = None
+    is_scan: bool = False
+
+
 class SuggestionOut(BaseModel):
     suggestion_id: str
     mailbox_profile_id: str
@@ -86,7 +106,10 @@ class SuggestionOut(BaseModel):
     why: list[WhyItem] = Field(default_factory=list)
     history_status: HistoryStatus = HistoryStatus.NONE
     attachment_warnings: list[AttachmentWarning] = Field(default_factory=list)
+    attachment_summaries: list[AttachmentSummary] = Field(default_factory=list)
     actions: list[str] = Field(default_factory=list)
+    extracted_actions: list[ActionItem] = Field(default_factory=list)
+    precompute_status: str | None = None
 
 
 class AnalyzeRequest(BaseModel):
@@ -147,12 +170,15 @@ class SyncIndexRequest(BaseModel):
 class IndexResponse(BaseModel):
     mailbox_profile_id: str
     indexed_count: int
-    embedding_dim: int = 1024
+    embedding_dim: int | None = None  # Resolved dynamically via get_embedding_dim()
     total_chunks: int | None = None
     history_status: HistoryProfileStatus = HistoryProfileStatus.NOT_STARTED
     last_history_sync_at: str | None = None
     history_sync_error: str | None = None
     started: bool = True
+    history_sync_phase: HistorySyncPhase = HistorySyncPhase.NOT_STARTED
+    history_messages_fetched: int = 0
+    history_messages_target: int = 0
 
 
 class SharedAiSettingsIn(BaseModel):
@@ -212,5 +238,8 @@ class ProfileInspectOut(BaseModel):
     history_sync_error: str | None = None
     history_chunk_count: int = 0
     indexed_message_count: int = 0
+    history_sync_phase: HistorySyncPhase = HistorySyncPhase.NOT_STARTED
+    history_messages_fetched: int = 0
+    history_messages_target: int = 0
     routes: list[LearnedRouteOut] = Field(default_factory=list)
     behavior_summary: BehaviorSummaryOut = Field(default_factory=BehaviorSummaryOut)

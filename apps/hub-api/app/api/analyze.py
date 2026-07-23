@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from app.api.deps import AuthCtx, DbSession, MailboxContentAccess
 from app.core.errors import AppError
 from app.db.repositories import ai_store
-from app.domain.enums import HistoryProfileStatus
+from app.domain.enums import HistoryProfileStatus, HistorySyncPhase
 from app.domain.schemas import (
     AnalyzeRequest,
     IndexRequest,
@@ -39,6 +39,9 @@ def _index_response(
         last_history_sync_at=snap["last_history_sync_at"],
         history_sync_error=snap["history_sync_error"],
         started=started,
+        history_sync_phase=snap.get("history_sync_phase") or HistorySyncPhase.NOT_STARTED,
+        history_messages_fetched=int(snap.get("history_messages_fetched") or 0),
+        history_messages_target=int(snap.get("history_messages_target") or 0),
     )
 
 

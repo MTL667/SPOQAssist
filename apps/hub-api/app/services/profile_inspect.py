@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.db.repositories import ai_store
 from app.domain.enums import HistoryProfileStatus
+from app.services.history_sync import _phase_for_profile
 from app.domain.models import MailboxProfile
 from app.domain.schemas import (
     BehaviorSummaryOut,
@@ -111,10 +112,34 @@ def ensure_cached_summary(
     *,
     allow_llm: bool = False,
 ) -> str | None:
-    """Return cached summary; if missing and history exists, fill grounded (or LLM if allowed)."""
+    """Return cached summary; if missing and history exists, fill grounded (or LLM if allowed).
+
+    Uses SELECT FOR UPDATE to prevent concurrent duplicate model calls.
+    """
     cached = (getattr(profile, "behavior_summary_text", None) or "").strip()
     if cached:
         return cached
+
+    # Acquire row lock to prevent concurrent summary computation
+    from sqlalchemy import select
+
+    try:
+        locked_profile = db.execute(
+            select(MailboxProfile)
+            .where(MailboxProfile.id == profile.id)
+            .with_for_update(nowait=False)
+        ).scalar_one_or_none()
+    except Exception:
+        # SQLite doesn't support FOR UPDATE — proceed without lock
+        locked_profile = profile
+
+    if locked_profile is None:
+        return None
+
+    # Re-check after lock — another thread may have populated the cache
+    refreshed_text = (getattr(locked_profile, "behavior_summary_text", None) or "").strip()
+    if refreshed_text:
+        return refreshed_text
 
     chunk_count = int(ai_store.count_chunks(db, profile.id) or 0)
     routes = _routes_for_profile(db, profile.id)
@@ -139,7 +164,7 @@ def ensure_cached_summary(
             samples=samples,
         )
     if text:
-        persist_behavior_summary(db, profile, text)
+        persist_behavior_summary(db, locked_profile, text)
         return text
     return None
 
@@ -191,6 +216,9 @@ def build_profile_inspect(
         history_sync_error=getattr(profile, "history_sync_error", None),
         history_chunk_count=chunk_count,
         indexed_message_count=indexed_messages,
+        history_sync_phase=_phase_for_profile(profile),
+        history_messages_fetched=int(getattr(profile, "history_messages_fetched", 0) or 0),
+        history_messages_target=int(getattr(profile, "history_messages_target", 0) or 0),
         routes=routes,
         behavior_summary=summary,
     )

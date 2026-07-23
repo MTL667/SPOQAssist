@@ -36,6 +36,10 @@ class MailboxProfile(Base):
     last_history_sync_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Mid-sync progress for poll-based UI (phase + message counts).
+    history_sync_phase: Mapped[str] = mapped_column(String(32), default="not_started")
+    history_messages_fetched: Mapped[int] = mapped_column(Integer, default=0)
+    history_messages_target: Mapped[int] = mapped_column(Integer, default=0)
     # Cached persona / behavior prompt for draft generation (not LoRA).
     behavior_summary_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     behavior_summary_updated_at: Mapped[datetime | None] = mapped_column(
@@ -169,7 +173,15 @@ class OutboundIdempotency(Base):
 
 
 class MailChunk(Base):
-    """Historical sent/forwarded chunk. embedding_json holds 1024 floats (pgvector in prod)."""
+    """Historical sent/forwarded chunk with native pgvector embedding.
+
+    - `embedding_vec`: native pgvector column for fast cosine search (primary)
+    - `embedding_json`: TEXT fallback for SQLite/test mode and backward compat
+    - `embedding_dim`: tracks dimensionality (1024 Ollama, 4096 vLLM)
+
+    Chunks with mismatched dim are skipped during retrieval and eligible for
+    re-embedding via the reembed management command.
+    """
 
     __tablename__ = "mail_chunks"
 
@@ -177,8 +189,11 @@ class MailChunk(Base):
     mailbox_profile_id: Mapped[str] = mapped_column(String(36), index=True)
     source_message_id: Mapped[str] = mapped_column(String(256), index=True)
     chunk_text: Mapped[str] = mapped_column(Text)
-    embedding_json: Mapped[str] = mapped_column(Text, default="[]")  # length 1024
+    embedding_json: Mapped[str] = mapped_column(Text, default="[]")
     embedding_dim: Mapped[int] = mapped_column(Integer, default=1024)
+    # Native pgvector column — populated alongside embedding_json for fast retrieval.
+    # Column created via schema_ensure (not in create_all for SQLite compat).
+    # embedding_vec: vector(4096) — added by ensure_pgvector_column()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -210,3 +225,45 @@ class RetentionPolicy(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
+
+
+class PrecomputeJob(Base):
+    """Pre-compute pipeline state per message — classify, embed, extract actions in background."""
+
+    __tablename__ = "precompute_jobs"
+    __table_args__ = (
+        UniqueConstraint("mailbox_profile_id", "message_id", name="uq_precompute_jobs_profile_msg"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    mailbox_profile_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("mailbox_profiles.id", ondelete="CASCADE"), index=True
+    )
+    message_id: Mapped[str] = mapped_column(String(256), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    suggestion_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class ExtractedAction(Base):
+    """Structured actions extracted from mail content (deadlines, todos, meetings, questions)."""
+
+    __tablename__ = "extracted_actions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    suggestion_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("suggestions.id", ondelete="CASCADE"), index=True
+    )
+    mailbox_profile_id: Mapped[str] = mapped_column(String(36), index=True)
+    message_id: Mapped[str] = mapped_column(String(256), index=True)
+    action_type: Mapped[str] = mapped_column(String(32))
+    description: Mapped[str] = mapped_column(Text)
+    due_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

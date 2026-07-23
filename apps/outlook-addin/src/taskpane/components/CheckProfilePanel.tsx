@@ -90,9 +90,19 @@ export function CheckProfilePanel({
           <div className={styles.block}>
             <Text weight="semibold">History</Text>
             <Text>
-              {data.history_status} · {data.history_chunk_count} chunks ·{" "}
-              {data.indexed_message_count} Sent berichten
+              {data.history_status}
+              {data.history_sync_phase ? ` · fase ${data.history_sync_phase}` : ""} ·{" "}
+              {data.history_chunk_count} chunks · {data.indexed_message_count} Sent berichten
             </Text>
+            {(data.history_status === "syncing" ||
+              data.history_sync_phase === "fetching" ||
+              data.history_sync_phase === "indexing") && (
+              <Text className={styles.meta} block>
+                Voortgang: {data.history_messages_fetched ?? 0}/
+                {data.history_messages_target ?? 0} berichten · {data.history_chunk_count}{" "}
+                chunks
+              </Text>
+            )}
             <Text className={styles.meta} block>
               Laatste sync: {data.last_history_sync_at || "—"}
             </Text>

@@ -16,7 +16,7 @@ from app.core.config import get_settings
 from app.core.errors import AppError
 from app.db.repositories import ai_store, mailboxes as mailbox_repo
 from app.db.session import get_engine
-from app.domain.enums import HistoryProfileStatus, MailboxKind
+from app.domain.enums import HistoryProfileStatus, HistorySyncPhase, MailboxKind
 from app.domain.models import MailboxProfile
 from app.services.inference import get_inference_client, plain_text_for_embed
 from app.services.mail_graph import get_mail_graph_client
@@ -38,6 +38,22 @@ def _session_factory() -> sessionmaker[Session]:
     return sessionmaker(bind=get_engine(), autoflush=False, autocommit=False, future=True)
 
 
+def _phase_for_profile(profile: MailboxProfile | None) -> str:
+    if profile is None:
+        return HistorySyncPhase.NOT_STARTED.value
+    phase = getattr(profile, "history_sync_phase", None)
+    if phase:
+        return str(phase)
+    status = getattr(profile, "history_status", None) or HistoryProfileStatus.NOT_STARTED.value
+    if status == HistoryProfileStatus.READY.value:
+        return HistorySyncPhase.READY.value
+    if status == HistoryProfileStatus.FAILED.value:
+        return HistorySyncPhase.FAILED.value
+    if status == HistoryProfileStatus.SYNCING.value:
+        return HistorySyncPhase.FETCHING.value
+    return HistorySyncPhase.NOT_STARTED.value
+
+
 def profile_history_snapshot(db: Session, mailbox_profile_id: str) -> dict:
     profile = mailbox_repo.get_profile(db, mailbox_profile_id)
     if profile is None:
@@ -46,6 +62,9 @@ def profile_history_snapshot(db: Session, mailbox_profile_id: str) -> dict:
             "last_history_sync_at": None,
             "history_sync_error": None,
             "total_chunks": 0,
+            "history_sync_phase": HistorySyncPhase.NOT_STARTED.value,
+            "history_messages_fetched": 0,
+            "history_messages_target": 0,
         }
     return {
         "history_status": getattr(profile, "history_status", None)
@@ -55,13 +74,35 @@ def profile_history_snapshot(db: Session, mailbox_profile_id: str) -> dict:
         else None,
         "history_sync_error": getattr(profile, "history_sync_error", None),
         "total_chunks": ai_store.count_chunks(db, mailbox_profile_id),
+        "history_sync_phase": _phase_for_profile(profile),
+        "history_messages_fetched": int(getattr(profile, "history_messages_fetched", 0) or 0),
+        "history_messages_target": int(getattr(profile, "history_messages_target", 0) or 0),
     }
 
 
-def _mark_syncing(db: Session, profile: MailboxProfile) -> None:
+def _set_progress(
+    db: Session,
+    profile: MailboxProfile,
+    *,
+    phase: HistorySyncPhase,
+    messages_fetched: int | None = None,
+    messages_target: int | None = None,
+) -> None:
+    profile.history_sync_phase = phase.value
+    if messages_fetched is not None:
+        profile.history_messages_fetched = max(0, int(messages_fetched))
+    if messages_target is not None:
+        profile.history_messages_target = max(0, int(messages_target))
+    db.commit()
+
+
+def _mark_syncing(db: Session, profile: MailboxProfile, *, max_messages: int = 0) -> None:
     profile.history_status = HistoryProfileStatus.SYNCING.value
     profile.history_sync_error = None
     profile.history_sync_started_at = _utcnow()
+    profile.history_sync_phase = HistorySyncPhase.FETCHING.value
+    profile.history_messages_fetched = 0
+    profile.history_messages_target = max(0, int(max_messages))
     db.commit()
 
 
@@ -70,6 +111,7 @@ def _mark_ready(db: Session, profile: MailboxProfile) -> None:
     profile.history_sync_error = None
     profile.last_history_sync_at = _utcnow()
     profile.history_sync_started_at = None
+    profile.history_sync_phase = HistorySyncPhase.READY.value
     db.commit()
 
 
@@ -77,6 +119,7 @@ def _mark_failed(db: Session, profile: MailboxProfile, message: str) -> None:
     profile.history_status = HistoryProfileStatus.FAILED.value
     profile.history_sync_error = (message or "History sync failed")[:512]
     profile.history_sync_started_at = None
+    profile.history_sync_phase = HistorySyncPhase.FAILED.value
     db.commit()
 
 
@@ -113,7 +156,7 @@ def sync_sent_history(
             retryable=False,
         )
 
-    _mark_syncing(db, profile)
+    _mark_syncing(db, profile, max_messages=max_messages)
     try:
         existing = ai_store.indexed_source_ids(db, mailbox_profile_id)
         client = get_mail_graph_client()
@@ -125,6 +168,15 @@ def sync_sent_history(
             graph_mailbox_id=graph_mailbox_id,
             max_messages=max_messages,
         )
+        fetched = len(messages)
+        _set_progress(
+            db,
+            profile,
+            phase=HistorySyncPhase.FETCHING,
+            messages_fetched=fetched,
+            messages_target=max(fetched, max_messages),
+        )
+
         items: list[dict[str, str]] = []
         for msg in messages:
             if msg.message_id in existing:
@@ -136,17 +188,39 @@ def sync_sent_history(
 
         count = 0
         if items:
+            _set_progress(
+                db,
+                profile,
+                phase=HistorySyncPhase.INDEXING,
+                messages_fetched=fetched,
+                messages_target=max(fetched, len(items)),
+            )
+
+            def _on_batch(_indexed_so_far: int) -> None:
+                # Keep message counts stable after fetch; chunk growth is visible via
+                # history_chunk_count from the DB on each poll.
+                db.refresh(profile)
+                _set_progress(
+                    db,
+                    profile,
+                    phase=HistorySyncPhase.INDEXING,
+                    messages_fetched=fetched,
+                    messages_target=max(fetched, max_messages),
+                )
+
             inference = get_inference_client()
             count = ai_store.index_chunks(
                 db,
                 mailbox_profile_id=mailbox_profile_id,
                 items=items,
                 embed_fn=inference.embed,
+                on_progress=_on_batch,
+                progress_every=5,
             )
         db.refresh(profile)
         _mark_ready(db, profile)
         try:
-            # Fast grounded refresh only — never block sync on a 14B summary call.
+            # Fast grounded refresh only — never block sync on a large summary call.
             from app.services.profile_inspect import ensure_cached_summary
 
             ensure_cached_summary(db, profile, allow_llm=False)
@@ -239,7 +313,7 @@ def request_history_sync(
                 _inflight_profiles.discard(mailbox_profile_id)
 
     # Non-blocking: mark syncing then run in a daemon thread with its own session.
-    _mark_syncing(db, profile)
+    _mark_syncing(db, profile, max_messages=max_messages)
 
     def _worker() -> None:
         SessionLocal = _session_factory()

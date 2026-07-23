@@ -186,6 +186,21 @@ export function getHubBaseUrl(): string {
 }
 
 export type HistoryProfileStatus = "not_started" | "syncing" | "ready" | "failed";
+export type HistorySyncPhase =
+  | "not_started"
+  | "fetching"
+  | "indexing"
+  | "ready"
+  | "failed";
+
+export interface HistorySyncProgress {
+  history_status: HistoryProfileStatus;
+  history_sync_error: string | null;
+  history_chunk_count: number | null;
+  history_sync_phase: HistorySyncPhase;
+  history_messages_fetched: number;
+  history_messages_target: number;
+}
 
 export async function syncMailboxIndex(params: {
   token: string;
@@ -193,13 +208,13 @@ export async function syncMailboxIndex(params: {
   maxMessages?: number;
   /** false = hub starts sync in background (Outlook open path). */
   wait?: boolean;
-}): Promise<{
-  indexed_count: number;
-  total_chunks: number | null;
-  history_status: HistoryProfileStatus;
-  history_sync_error: string | null;
-  started: boolean;
-}> {
+}): Promise<
+  HistorySyncProgress & {
+    indexed_count: number;
+    total_chunks: number | null;
+    started: boolean;
+  }
+> {
   const response = await fetch(
     `${hubBaseUrl()}/v1/mailbox_profiles/${params.mailboxProfileId}/index/sync`,
     {
@@ -222,6 +237,10 @@ export async function syncMailboxIndex(params: {
     history_status?: HistoryProfileStatus;
     history_sync_error?: string | null;
     started?: boolean;
+    history_sync_phase?: HistorySyncPhase;
+    history_messages_fetched?: number;
+    history_messages_target?: number;
+    history_chunk_count?: number | null;
   };
   return {
     indexed_count: data.indexed_count,
@@ -229,17 +248,17 @@ export async function syncMailboxIndex(params: {
     history_status: data.history_status ?? "not_started",
     history_sync_error: data.history_sync_error ?? null,
     started: data.started ?? true,
+    history_chunk_count: data.history_chunk_count ?? data.total_chunks ?? null,
+    history_sync_phase: data.history_sync_phase ?? "not_started",
+    history_messages_fetched: data.history_messages_fetched ?? 0,
+    history_messages_target: data.history_messages_target ?? 0,
   };
 }
 
 export async function fetchMailboxProfile(params: {
   token: string;
   mailboxProfileId: string;
-}): Promise<{
-  history_status: HistoryProfileStatus;
-  history_sync_error: string | null;
-  history_chunk_count: number | null;
-}> {
+}): Promise<HistorySyncProgress> {
   const response = await fetch(
     `${hubBaseUrl()}/v1/mailbox_profiles/${params.mailboxProfileId}`,
     {
@@ -254,11 +273,17 @@ export async function fetchMailboxProfile(params: {
     history_status?: HistoryProfileStatus;
     history_sync_error?: string | null;
     history_chunk_count?: number | null;
+    history_sync_phase?: HistorySyncPhase;
+    history_messages_fetched?: number;
+    history_messages_target?: number;
   };
   return {
     history_status: data.history_status ?? "not_started",
     history_sync_error: data.history_sync_error ?? null,
     history_chunk_count: data.history_chunk_count ?? null,
+    history_sync_phase: data.history_sync_phase ?? "not_started",
+    history_messages_fetched: data.history_messages_fetched ?? 0,
+    history_messages_target: data.history_messages_target ?? 0,
   };
 }
 
@@ -273,6 +298,9 @@ export interface ProfileInspect {
   history_sync_error: string | null;
   history_chunk_count: number;
   indexed_message_count: number;
+  history_sync_phase?: HistorySyncPhase;
+  history_messages_fetched?: number;
+  history_messages_target?: number;
   routes: Array<{
     pattern_key: string;
     route_email: string;

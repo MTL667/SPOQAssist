@@ -1,5 +1,26 @@
 # Deferred work
 
+## Deferred from: spec-profile-sync-status-updates review (2026-07-23)
+
+- Message counts cannot rise during Graph fetch until list API exposes pagination progress (fetch completes then jumps once)
+- IVFFlat `lists` frozen at first non-empty ensure; no rebuild as corpus grows
+- `embedding_vec` column dim not migrated when embedding model dim changes
+- Mid-loop `index_chunks` commits trade atomicity for live chunk counts (by design for poll UX)
+- Check profiel remains one-shot on open (no live poll while panel stays open)
+- Hub health `degraded` accepted by add-in (needed while draft service is optionally down)
+
+## Deferred from: code review — DGX Spark migration (2026-07-23)
+
+- `_embedding_dim` module-global cached without invalidation path — tests handle it; production doesn't hot-reload config
+- Async def health endpoints call sync httpx — acceptable for low-traffic health endpoint; consider `run_in_executor` if latency matters
+- No `/metrics` Prometheus endpoint on hub API — vLLM natively exposes metrics; hub `/metrics` is infra/ops concern
+- Sequential pre-compute processing (not 4-parallel) — ThreadPoolExecutor import ready; enable when stability proven
+- No server-side wait/block mechanism when user opens mail mid-compute — client polling is acceptable for MVP
+- No stale suggestion refresh (>1h) — post-launch feature; pre-compute covers fresh arrivals
+- No dedicated `precomputed_at` timestamp — `updated_at` field suffices for pilot
+- Text truncation uses 8000 chars instead of 8K tokens — conservative approach; works correctly
+- No tap-to-context on action items in Outlook add-in — UI enhancement for next iteration
+
 ## Deferred from: spec-draft-language-match-profile (2026-07-22)
 
 - Languages beyond NL/EN (Ask First)

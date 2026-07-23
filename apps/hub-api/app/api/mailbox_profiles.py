@@ -9,7 +9,7 @@ from fastapi import APIRouter
 from app.api.deps import AuthCtx, DbSession, MailboxContentAccess
 from app.core.errors import AppError
 from app.db.repositories import ai_store, mailboxes as mailbox_repo
-from app.domain.enums import HistoryProfileStatus, MailboxRole
+from app.domain.enums import HistoryProfileStatus, HistorySyncPhase, MailboxRole
 from app.domain.schemas import (
     ConnectMailboxRequest,
     ConnectMailboxResponse,
@@ -17,6 +17,7 @@ from app.domain.schemas import (
     MailboxProfileOut,
     ProfileInspectOut,
 )
+from app.services.history_sync import profile_history_snapshot
 from app.services.mail_graph import get_mail_graph_client
 from app.services.profile_inspect import build_profile_inspect
 
@@ -28,6 +29,20 @@ router = APIRouter(prefix="/v1/mailbox_profiles", tags=["mailbox_profiles"])
 def _to_out(profile, db=None) -> MailboxProfileOut:  # type: ignore[no-untyped-def]
     chunks = ai_store.count_chunks(db, profile.id) if db is not None else None
     last = getattr(profile, "last_history_sync_at", None)
+    snap = (
+        profile_history_snapshot(db, profile.id)
+        if db is not None
+        else {
+            "history_sync_phase": getattr(profile, "history_sync_phase", None)
+            or HistorySyncPhase.NOT_STARTED.value,
+            "history_messages_fetched": int(
+                getattr(profile, "history_messages_fetched", 0) or 0
+            ),
+            "history_messages_target": int(
+                getattr(profile, "history_messages_target", 0) or 0
+            ),
+        }
+    )
     return MailboxProfileOut(
         id=profile.id,
         tenant_id=profile.tenant_id,
@@ -42,6 +57,9 @@ def _to_out(profile, db=None) -> MailboxProfileOut:  # type: ignore[no-untyped-d
         last_history_sync_at=last.isoformat() if last else None,
         history_sync_error=getattr(profile, "history_sync_error", None),
         history_chunk_count=chunks,
+        history_sync_phase=snap.get("history_sync_phase") or HistorySyncPhase.NOT_STARTED,
+        history_messages_fetched=int(snap.get("history_messages_fetched") or 0),
+        history_messages_target=int(snap.get("history_messages_target") or 0),
     )
 
 

@@ -53,6 +53,33 @@ class HistoryProfileStatus(StrEnum):
     FAILED = "failed"
 
 
+class HistorySyncPhase(StrEnum):
+    """Finer-grained sync progress for UI status updates."""
+
+    NOT_STARTED = "not_started"
+    FETCHING = "fetching"
+    INDEXING = "indexing"
+    READY = "ready"
+    FAILED = "failed"
+
+
 class InferenceMode(StrEnum):
     STUB = "stub"
     OLLAMA = "ollama"
+    VLLM = "vllm"
+
+
+class PrecomputeStatus(StrEnum):
+    """Pre-compute pipeline state for a message."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    DONE = "done"
+    FAILED = "failed"
+
+
+class ActionType(StrEnum):
+    DEADLINE = "deadline"
+    TODO = "todo"
+    MEETING = "meeting"
+    QUESTION = "question"

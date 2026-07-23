@@ -16,7 +16,7 @@ from app.domain.models import (
     SharedAiSettings,
     Suggestion,
 )
-from app.services.inference import EMBEDDING_DIM
+from app.services.inference import EMBEDDING_DIM, get_embedding_dim
 
 logger = logging.getLogger(__name__)
 
@@ -149,9 +149,13 @@ def index_chunks(
     mailbox_profile_id: str,
     items: list[dict[str, Any]],
     embed_fn: Callable[[str], list[float]],
+    on_progress: Callable[[int], None] | None = None,
+    progress_every: int = 5,
 ) -> int:
+    dim = get_embedding_dim()
     count = 0
     skipped = 0
+    every = max(1, int(progress_every))
     for item in items:
         text = str(item.get("text") or "").strip()
         message_id = str(item.get("message_id") or "")
@@ -163,25 +167,56 @@ def index_chunks(
             skipped += 1
             logger.info("chunk_embed_skipped mailbox_profile_id=%s", mailbox_profile_id)
             continue
-        if len(emb) != EMBEDDING_DIM:
-            emb = (emb + [0.0] * EMBEDDING_DIM)[:EMBEDDING_DIM]
-        db.add(
-            MailChunk(
-                mailbox_profile_id=mailbox_profile_id,
-                source_message_id=message_id,
-                chunk_text=text[:8000],
-                embedding_json=json.dumps(emb),
-                embedding_dim=EMBEDDING_DIM,
-            )
+        if len(emb) != dim:
+            emb = (emb + [0.0] * dim)[:dim]
+        chunk = MailChunk(
+            mailbox_profile_id=mailbox_profile_id,
+            source_message_id=message_id,
+            chunk_text=text[:8000],
+            embedding_json=json.dumps(emb),
+            embedding_dim=dim,
         )
+        db.add(chunk)
+        # Also write native pgvector column if available (Postgres only; skipped on SQLite)
+        try:
+            from sqlalchemy import text as sa_text
+
+            db.flush()
+            vec_literal = "[" + ",".join(str(v) for v in emb) + "]"
+            db.execute(
+                sa_text(
+                    "UPDATE mail_chunks SET embedding_vec = :vec::vector WHERE id = :id"
+                ),
+                {"vec": vec_literal, "id": chunk.id},
+            )
+        except Exception:
+            pass  # SQLite or pgvector not available — JSON fallback sufficient
         count += 1
+        if count % every == 0:
+            db.commit()
+            if on_progress is not None:
+                try:
+                    on_progress(count)
+                except Exception:
+                    logger.info(
+                        "chunk_index_progress_callback_failed mailbox_profile_id=%s",
+                        mailbox_profile_id,
+                    )
     db.commit()
+    if on_progress is not None and count > 0 and count % every != 0:
+        try:
+            on_progress(count)
+        except Exception:
+            logger.info(
+                "chunk_index_progress_callback_failed mailbox_profile_id=%s",
+                mailbox_profile_id,
+            )
     logger.info(
         "chunks_indexed mailbox_profile_id=%s count=%s skipped=%s dim=%s",
         mailbox_profile_id,
         count,
         skipped,
-        EMBEDDING_DIM,
+        dim,
     )
     return count
 

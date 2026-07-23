@@ -27,6 +27,7 @@ import {
   submitFeedback,
   syncMailboxIndex,
   type HistoryProfileStatus,
+  type HistorySyncPhase,
   type ProfileInspect,
 } from "./api/client";
 import { mapSuggestion } from "./api/mappers";
@@ -67,23 +68,57 @@ const useStyles = makeStyles({
   profileBusy: { color: "#5B6B73", marginTop: "8px" },
 });
 
-function historyProfileLabel(
-  status: HistoryProfileStatus,
-  err: string | null,
-  signedIn: boolean
-): string {
+function historyProfileLabel(params: {
+  status: HistoryProfileStatus;
+  phase: HistorySyncPhase;
+  err: string | null;
+  signedIn: boolean;
+  messagesFetched: number;
+  messagesTarget: number;
+  chunkCount: number | null;
+}): string {
+  const {
+    status,
+    phase,
+    err,
+    signedIn,
+    messagesFetched,
+    messagesTarget,
+    chunkCount,
+  } = params;
   if (!signedIn) {
     return "Sign in to build or refresh the mailbox profile.";
   }
-  if (status === "syncing" || status === "not_started") {
-    return "Profiel opbouwen… (analyze kan gewoon door)";
-  }
-  if (status === "failed") {
+  if (status === "failed" || phase === "failed") {
     return err
       ? `Profiel bijwerken mislukt: ${err}`
       : "Profiel bijwerken mislukt — eerdere geschiedenis blijft bruikbaar.";
   }
+  // Prefer lifecycle status over a stale/default phase after schema add.
+  if (status === "ready") {
+    return "Mailbox-profiel klaar";
+  }
+  if (status === "not_started" && phase === "not_started") {
+    return "1/4 Profiel starten…";
+  }
+  if (phase === "fetching" || (status === "syncing" && phase !== "indexing")) {
+    const target = messagesTarget > 0 ? messagesTarget : "…";
+    return `2/4 Sent-berichten ophalen (${messagesFetched}/${target})`;
+  }
+  if (phase === "indexing" || status === "syncing") {
+    const chunks = chunkCount ?? 0;
+    return `3/4 Chunks indexeren (${chunks} chunks)`;
+  }
   return "Mailbox-profiel klaar";
+}
+
+function shouldDeferAnalyze(
+  status: HistoryProfileStatus,
+  bootstrapDone: boolean
+): boolean {
+  // First-session bootstrap: wait for terminal ready/failed before analyze.
+  if (bootstrapDone) return false;
+  return status === "not_started" || status === "syncing";
 }
 
 function newIdempotencyKey(): string {
@@ -105,7 +140,11 @@ export function App(): React.JSX.Element {
   const [recipients, setRecipients] = useState<string[]>([]);
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
   const [historyStatus, setHistoryStatus] = useState<HistoryProfileStatus>("not_started");
+  const [historyPhase, setHistoryPhase] = useState<HistorySyncPhase>("not_started");
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyMessagesFetched, setHistoryMessagesFetched] = useState(0);
+  const [historyMessagesTarget, setHistoryMessagesTarget] = useState(0);
+  const [historyChunkCount, setHistoryChunkCount] = useState<number | null>(null);
   const [needsSignIn, setNeedsSignIn] = useState(false);
   const [ssoError, setSsoError] = useState<SsoErrorInfo | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -119,6 +158,40 @@ export function App(): React.JSX.Element {
   const historyRefreshedFor = useRef<string | null>(null);
   /** Prevent re-analyze when pane state flips (analyzing → ready would otherwise loop). */
   const didInitialAnalyze = useRef(false);
+  /** Queue one analyze after first bootstrap sync reaches a usable state. */
+  const pendingAnalyzeAfterSync = useRef(false);
+  /** True after this session has seen ready/failed, or profile already had history. */
+  const bootstrapDoneRef = useRef(false);
+  const runAnalyzeRef = useRef<(() => Promise<void>) | null>(null);
+
+  const applyHistoryProgress = useCallback(
+    (snap: {
+      history_status: HistoryProfileStatus;
+      history_sync_error: string | null;
+      history_sync_phase?: HistorySyncPhase;
+      history_messages_fetched?: number;
+      history_messages_target?: number;
+      history_chunk_count?: number | null;
+      total_chunks?: number | null;
+    }) => {
+      const status = snap.history_status;
+      let phase = snap.history_sync_phase ?? "not_started";
+      if (status === "ready" && phase === "not_started") phase = "ready";
+      if (status === "failed" && phase === "not_started") phase = "failed";
+      setHistoryStatus(status);
+      setHistoryError(snap.history_sync_error);
+      setHistoryPhase(phase);
+      setHistoryMessagesFetched(snap.history_messages_fetched ?? 0);
+      setHistoryMessagesTarget(snap.history_messages_target ?? 0);
+      const chunks = snap.history_chunk_count ?? snap.total_chunks ?? null;
+      setHistoryChunkCount(chunks);
+      if (status === "ready" || status === "failed") {
+        bootstrapDoneRef.current = true;
+      }
+      return { status, phase, chunkCount: chunks };
+    },
+    []
+  );
 
   const clearSuggestion = useCallback(() => {
     setSuggestion(null);
@@ -133,7 +206,7 @@ export function App(): React.JSX.Element {
     setUnavailableMessage(null);
     const attempt = async (): Promise<boolean> => {
       const health = await fetchHealth();
-      return health.status === "ok";
+      return health.status === "ok" || health.status === "degraded";
     };
     try {
       let ok = false;
@@ -154,7 +227,7 @@ export function App(): React.JSX.Element {
     } catch {
       setState("unavailable");
       setUnavailableMessage(
-        "The SpoqSense hub cannot be reached on the LAN (Mac Studio :8000 via webpack proxy). Check the Studio is awake and Retry."
+        "The SpoqSense hub cannot be reached. Check Tailscale/VPN and that the DGX Spark is online, then Retry."
       );
       clearSuggestion();
     } finally {
@@ -170,42 +243,60 @@ export function App(): React.JSX.Element {
   }, []);
 
   const refreshHistoryProfile = useCallback(
-    (token: string, profileId: string) => {
-      // Fire-and-forget: do not block analyze. Hub runs ≤300 bootstrap / incremental sync.
-      setHistoryStatus("syncing");
-      setHistoryError(null);
-      void syncMailboxIndex({
-        token,
-        mailboxProfileId: profileId,
-        maxMessages: 300,
-        wait: false,
-      })
+    (token: string, profileId: string, onTerminal?: () => void) => {
+      void fetchMailboxProfile({ token, mailboxProfileId: profileId })
+        .then((prior) => {
+          applyHistoryProgress(prior);
+          if (
+            prior.history_status === "ready" ||
+            prior.history_status === "failed" ||
+            (prior.history_chunk_count != null && prior.history_chunk_count > 0)
+          ) {
+            // Existing profile — refresh may run, but analyze need not wait.
+            bootstrapDoneRef.current = true;
+            onTerminal?.();
+          }
+          return syncMailboxIndex({
+            token,
+            mailboxProfileId: profileId,
+            maxMessages: 300,
+            wait: false,
+          });
+        })
         .then((result) => {
-          setHistoryStatus(result.history_status);
-          setHistoryError(result.history_sync_error);
+          applyHistoryProgress(result);
+          if (result.history_status === "ready" || result.history_status === "failed") {
+            bootstrapDoneRef.current = true;
+            onTerminal?.();
+            return;
+          }
           if (result.history_status === "syncing") {
             stopHistoryPoll();
             historyPollRef.current = window.setInterval(() => {
               void fetchMailboxProfile({ token, mailboxProfileId: profileId })
                 .then((snap) => {
-                  setHistoryStatus(snap.history_status);
-                  setHistoryError(snap.history_sync_error);
+                  applyHistoryProgress(snap);
                   if (snap.history_status === "ready" || snap.history_status === "failed") {
+                    bootstrapDoneRef.current = true;
                     stopHistoryPoll();
+                    onTerminal?.();
                   }
                 })
                 .catch(() => {
                   /* keep last known status */
                 });
-            }, 4000);
+            }, 2000);
           }
         })
         .catch((err: unknown) => {
           setHistoryStatus("failed");
+          setHistoryPhase("failed");
           setHistoryError(err instanceof Error ? err.message : "Sync failed");
+          bootstrapDoneRef.current = true;
+          onTerminal?.();
         });
     },
-    [stopHistoryPoll]
+    [applyHistoryProgress, stopHistoryPoll]
   );
 
   const connectMailboxSession = useCallback(
@@ -277,7 +368,12 @@ export function App(): React.JSX.Element {
     // Outlook open / first session touch only — not on every analyze.
     if (historyRefreshedFor.current !== profileId) {
       historyRefreshedFor.current = profileId;
-      refreshHistoryProfile(token, profileId);
+      refreshHistoryProfile(token, profileId, () => {
+        if (pendingAnalyzeAfterSync.current) {
+          pendingAnalyzeAfterSync.current = false;
+          void runAnalyzeRef.current?.();
+        }
+      });
     }
     return { token, profileId };
   }, [connectMailboxSession, refreshHistoryProfile]);
@@ -349,6 +445,12 @@ export function App(): React.JSX.Element {
       setState("idle");
       return;
     }
+    if (shouldDeferAnalyze(historyStatus, bootstrapDoneRef.current)) {
+      pendingAnalyzeAfterSync.current = true;
+      setState("idle");
+      clearSuggestion();
+      return;
+    }
     const mail = await getSelectedMail();
     if (!mail) {
       setState("idle");
@@ -374,8 +476,35 @@ export function App(): React.JSX.Element {
       setState(vm.confidence === "high" ? "ready_hero" : "ready_review");
     } catch (err) {
       if (seq !== analyzeSeq.current) return;
-      setSuggestion(null);
       const msg = err instanceof Error ? err.message : "Analyze failed";
+      const status = (err as Error & { status?: number }).status;
+      if (status === 404 || /not found/i.test(msg)) {
+        clearMailboxProfileCache();
+        historyRefreshedFor.current = null;
+        const retrySession = await ensureSession();
+        if (retrySession && seq === analyzeSeq.current) {
+          try {
+            const api = await analyzeMessage({
+              token: retrySession.token,
+              mailboxProfileId: retrySession.profileId,
+              messageId: mail!.itemId,
+              subject: mail!.subject,
+              body: mail!.body,
+              sender: mail!.sender,
+              attachmentNames: mail!.attachmentNames,
+            });
+            if (seq !== analyzeSeq.current) return;
+            const vm = mapSuggestion(api);
+            setSuggestion(vm);
+            setEditDraft(vm.draft || "");
+            setState(vm.confidence === "high" ? "ready_hero" : "ready_review");
+            return;
+          } catch {
+            /* fall through to generic error */
+          }
+        }
+      }
+      setSuggestion(null);
       if (/401|unauthor|auth/i.test(msg)) {
         setNeedsSignIn(true);
         setSsoError({
@@ -389,7 +518,11 @@ export function App(): React.JSX.Element {
       setState("error");
       setErrorMessage(msg);
     }
-  }, [clearSuggestion, ensureSession]);
+  }, [clearSuggestion, ensureSession, historyStatus]);
+
+  useEffect(() => {
+    runAnalyzeRef.current = () => runAnalyze();
+  }, [runAnalyze]);
 
   useEffect(() => {
     void checkHub();
@@ -405,9 +538,8 @@ export function App(): React.JSX.Element {
     // pane states (ready_*/analyzing) or every completed analyze restarts.
     if (!didInitialAnalyze.current) {
       didInitialAnalyze.current = true;
-      void ensureSession().then((session) => {
-        if (session) void runAnalyze();
-      });
+      pendingAnalyzeAfterSync.current = true;
+      void ensureSession();
     }
     return onMailSelectionChanged(() => {
       void runAnalyze();
@@ -527,7 +659,15 @@ export function App(): React.JSX.Element {
         block
         aria-live="polite"
       >
-        {historyProfileLabel(historyStatus, historyError, !needsSignIn)}
+        {historyProfileLabel({
+          status: historyStatus,
+          phase: historyPhase,
+          err: historyError,
+          signedIn: !needsSignIn,
+          messagesFetched: historyMessagesFetched,
+          messagesTarget: historyMessagesTarget,
+          chunkCount: historyChunkCount,
+        })}
       </Text>
 
       {needsSignIn ? (
@@ -538,9 +678,8 @@ export function App(): React.JSX.Element {
               if (result.ok) {
                 setNeedsSignIn(false);
                 setSsoError(null);
-                void ensureSession().then((session) => {
-                  if (session) void runAnalyze();
-                });
+                pendingAnalyzeAfterSync.current = true;
+                void ensureSession();
                 return;
               }
               setNeedsSignIn(true);
@@ -550,16 +689,17 @@ export function App(): React.JSX.Element {
           onTokenReady={() => {
             setNeedsSignIn(false);
             setSsoError(null);
-            void ensureSession().then((session) => {
-              if (session) void runAnalyze();
-            });
+            pendingAnalyzeAfterSync.current = true;
+            void ensureSession();
           }}
         />
       ) : null}
 
       {!needsSignIn && state === "idle" && !suggestion ? (
         <Text className={styles.meta} block>
-          Select a message in Outlook to analyze. No suggestion is shown until analysis completes.
+          {shouldDeferAnalyze(historyStatus, bootstrapDoneRef.current)
+            ? "Profiel wordt eerst opgebouwd — analyse start automatisch zodra sync klaar is."
+            : "Select a message in Outlook to analyze. No suggestion is shown until analysis completes."}
         </Text>
       ) : null}
 
