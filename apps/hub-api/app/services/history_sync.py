@@ -54,6 +54,25 @@ def _phase_for_profile(profile: MailboxProfile | None) -> str:
     return HistorySyncPhase.NOT_STARTED.value
 
 
+def heal_history_sync_if_needed(db: Session, profile: MailboxProfile) -> bool:
+    """Recover orphaned or stale syncing rows. Safe on every profile poll/GET."""
+    if (profile.history_status or "") != HistoryProfileStatus.SYNCING.value:
+        return False
+    with _inflight_lock:
+        inflight = profile.id in _inflight_profiles
+        stale = _is_stale_syncing(profile)
+        if inflight and not stale:
+            return False
+        if inflight and stale:
+            # Worker marked inflight but made no terminal progress past threshold.
+            _inflight_profiles.discard(profile.id)
+    chunks = ai_store.count_chunks(db, profile.id)
+    if chunks <= 0 and not getattr(profile, "history_sync_error", None):
+        profile.history_sync_error = "Sync stalled or interrupted"
+    _recover_orphaned_profile(db, profile)
+    return True
+
+
 def profile_history_snapshot(db: Session, mailbox_profile_id: str) -> dict:
     profile = mailbox_repo.get_profile(db, mailbox_profile_id)
     if profile is None:
@@ -66,6 +85,10 @@ def profile_history_snapshot(db: Session, mailbox_profile_id: str) -> dict:
             "history_messages_fetched": 0,
             "history_messages_target": 0,
         }
+    # Refresh before heal so we do not overwrite a terminal state just committed by the worker.
+    db.refresh(profile)
+    heal_history_sync_if_needed(db, profile)
+    db.refresh(profile)
     started = getattr(profile, "history_sync_started_at", None)
     return {
         "history_status": getattr(profile, "history_status", None)
@@ -92,18 +115,28 @@ def _set_progress(
 ) -> None:
     profile.history_sync_phase = phase.value
     if messages_fetched is not None:
-        profile.history_messages_fetched = max(0, int(messages_fetched))
+        # Monotonic during a run so OBO heartbeats (0) cannot wipe a refresh floor.
+        profile.history_messages_fetched = max(
+            int(getattr(profile, "history_messages_fetched", 0) or 0),
+            max(0, int(messages_fetched)),
+        )
     if messages_target is not None:
         profile.history_messages_target = max(0, int(messages_target))
     db.commit()
 
 
 def _mark_syncing(db: Session, profile: MailboxProfile, *, max_messages: int = 0) -> None:
+    prev_fetched = int(getattr(profile, "history_messages_fetched", 0) or 0)
+    chunks = ai_store.count_chunks(db, profile.id)
     profile.history_status = HistoryProfileStatus.SYNCING.value
     profile.history_sync_error = None
     profile.history_sync_started_at = _utcnow()
     profile.history_sync_phase = HistorySyncPhase.FETCHING.value
-    profile.history_messages_fetched = 0
+    # Background refresh with an existing index must not look like "0 messages fetched".
+    if chunks > 0:
+        profile.history_messages_fetched = max(prev_fetched, chunks)
+    else:
+        profile.history_messages_fetched = 0
     profile.history_messages_target = max(0, int(max_messages))
     db.commit()
 
@@ -135,8 +168,10 @@ def _is_stale_syncing(profile: MailboxProfile) -> bool:
     if (profile.history_status or "") != HistoryProfileStatus.SYNCING.value:
         return False
     started = getattr(profile, "history_sync_started_at", None)
+    # Missing started_at is not enough to kill an inflight worker; orphan path
+    # (not inflight) still recovers immediately via heal_history_sync_if_needed.
     if started is None:
-        return True
+        return False
     if started.tzinfo is None:
         started = started.replace(tzinfo=timezone.utc)
     return _utcnow() - started > STALE_SYNCING_AFTER

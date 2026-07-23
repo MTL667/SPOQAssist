@@ -9,8 +9,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.db.repositories import ai_store
-from app.domain.enums import HistoryProfileStatus
-from app.services.history_sync import _phase_for_profile
+from app.domain.enums import HistoryProfileStatus, HistorySyncPhase
 from app.domain.models import MailboxProfile
 from app.domain.schemas import (
     BehaviorSummaryOut,
@@ -193,10 +192,13 @@ def build_profile_inspect(
     *,
     include_summary: bool = True,
 ) -> ProfileInspectOut:
-    chunk_count = int(ai_store.count_chunks(db, profile.id) or 0)
+    from app.services.history_sync import profile_history_snapshot
+
+    snap = profile_history_snapshot(db, profile.id)
+    db.refresh(profile)
+    chunk_count = int(snap.get("total_chunks") or 0)
     indexed_messages = int(ai_store.count_indexed_messages(db, profile.id) or 0)
     routes = _routes_for_profile(db, profile.id)
-    last = getattr(profile, "last_history_sync_at", None)
     summary = BehaviorSummaryOut(status="skipped", text=None)
     if include_summary:
         summary = refresh_behavior_summary(db, profile)
@@ -210,15 +212,14 @@ def build_profile_inspect(
         kind=profile.kind,
         connection_status=profile.connection_status,
         connection_error=profile.connection_error,
-        history_status=getattr(profile, "history_status", None)
-        or HistoryProfileStatus.NOT_STARTED,
-        last_history_sync_at=last.isoformat() if last else None,
-        history_sync_error=getattr(profile, "history_sync_error", None),
+        history_status=snap.get("history_status") or HistoryProfileStatus.NOT_STARTED,
+        last_history_sync_at=snap.get("last_history_sync_at"),
+        history_sync_error=snap.get("history_sync_error"),
         history_chunk_count=chunk_count,
         indexed_message_count=indexed_messages,
-        history_sync_phase=_phase_for_profile(profile),
-        history_messages_fetched=int(getattr(profile, "history_messages_fetched", 0) or 0),
-        history_messages_target=int(getattr(profile, "history_messages_target", 0) or 0),
+        history_sync_phase=snap.get("history_sync_phase") or HistorySyncPhase.NOT_STARTED,
+        history_messages_fetched=int(snap.get("history_messages_fetched") or 0),
+        history_messages_target=int(snap.get("history_messages_target") or 0),
         routes=routes,
         behavior_summary=summary,
     )

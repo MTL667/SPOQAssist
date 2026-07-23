@@ -120,10 +120,25 @@ function historyProfileLabel(params: {
   }
   if (phase === "fetching" || (status === "syncing" && phase !== "indexing")) {
     const target = messagesTarget > 0 ? messagesTarget : "…";
+    // Existing index + background refresh must not look like an empty first bootstrap.
+    if ((chunkCount ?? 0) > 0) {
+      return withTime(`2/4 Achtergrond verversen (${messagesFetched}/${target})`);
+    }
+    if (
+      (elapsedSec ?? 0) >= 120 &&
+      messagesFetched === 0
+    ) {
+      return withTime(
+        `Sync lijkt vastgelopen (0/${target}) — open opnieuw of Check profiel`
+      );
+    }
     return withTime(`2/4 Sent-berichten ophalen (${messagesFetched}/${target})`);
   }
   if (phase === "indexing" || status === "syncing") {
     const chunks = chunkCount ?? 0;
+    if (chunks > 0 && status === "syncing") {
+      return withTime(`3/4 Achtergrond indexeren (${chunks} chunks)`);
+    }
     return withTime(`3/4 Chunks indexeren (${chunks} chunks)`);
   }
   return "Mailbox-profiel klaar";

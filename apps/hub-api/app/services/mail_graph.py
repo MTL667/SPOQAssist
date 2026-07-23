@@ -226,6 +226,11 @@ class StubMailGraphClient:
         on_progress: Callable[[int], None] | None = None,
     ) -> list[GraphMessage]:
         del user_assertion, tenant_id, mailbox_kind, graph_mailbox_id
+        if on_progress is not None:
+            try:
+                on_progress(0)
+            except Exception:
+                logger.info("graph_list_sent_progress_callback_failed")
         sender = mailbox_email or "me@contoso.com"
         samples = [
             (
@@ -587,6 +592,12 @@ class OboMailGraphClient:
         on_progress: Callable[[int], None] | None = None,
     ) -> list[GraphMessage]:
         token = self._acquire_obo_token(user_assertion=user_assertion, tenant_id=tenant_id)
+        # Heartbeat after OBO so poll UI can distinguish a live fetch from a dead worker.
+        if on_progress is not None:
+            try:
+                on_progress(0)
+            except Exception:
+                logger.info("graph_list_sent_progress_callback_failed")
         root = _mailbox_root(
             mailbox_kind=mailbox_kind,
             mailbox_email=mailbox_email,

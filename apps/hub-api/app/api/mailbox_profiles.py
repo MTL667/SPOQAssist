@@ -27,12 +27,19 @@ router = APIRouter(prefix="/v1/mailbox_profiles", tags=["mailbox_profiles"])
 
 
 def _to_out(profile, db=None) -> MailboxProfileOut:  # type: ignore[no-untyped-def]
-    chunks = ai_store.count_chunks(db, profile.id) if db is not None else None
-    last = getattr(profile, "last_history_sync_at", None)
     snap = (
         profile_history_snapshot(db, profile.id)
         if db is not None
         else {
+            "history_status": getattr(profile, "history_status", None)
+            or HistoryProfileStatus.NOT_STARTED.value,
+            "last_history_sync_at": (
+                profile.last_history_sync_at.isoformat()
+                if getattr(profile, "last_history_sync_at", None)
+                else None
+            ),
+            "history_sync_error": getattr(profile, "history_sync_error", None),
+            "total_chunks": None,
             "history_sync_phase": getattr(profile, "history_sync_phase", None)
             or HistorySyncPhase.NOT_STARTED.value,
             "history_messages_fetched": int(
@@ -41,8 +48,12 @@ def _to_out(profile, db=None) -> MailboxProfileOut:  # type: ignore[no-untyped-d
             "history_messages_target": int(
                 getattr(profile, "history_messages_target", 0) or 0
             ),
+            "history_sync_started_at": None,
         }
     )
+    chunks = snap.get("total_chunks")
+    if chunks is None and db is not None:
+        chunks = ai_store.count_chunks(db, profile.id)
     return MailboxProfileOut(
         id=profile.id,
         tenant_id=profile.tenant_id,
@@ -52,10 +63,9 @@ def _to_out(profile, db=None) -> MailboxProfileOut:  # type: ignore[no-untyped-d
         connection_status=profile.connection_status,
         connection_error=profile.connection_error,
         graph_mailbox_id=profile.graph_mailbox_id,
-        history_status=getattr(profile, "history_status", None)
-        or HistoryProfileStatus.NOT_STARTED,
-        last_history_sync_at=last.isoformat() if last else None,
-        history_sync_error=getattr(profile, "history_sync_error", None),
+        history_status=snap.get("history_status") or HistoryProfileStatus.NOT_STARTED,
+        last_history_sync_at=snap.get("last_history_sync_at"),
+        history_sync_error=snap.get("history_sync_error"),
         history_chunk_count=chunks,
         history_sync_phase=snap.get("history_sync_phase") or HistorySyncPhase.NOT_STARTED,
         history_messages_fetched=int(snap.get("history_messages_fetched") or 0),

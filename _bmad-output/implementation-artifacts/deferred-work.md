@@ -1,5 +1,16 @@
 # Deferred work
 
+## Deferred from: quick-dev split — sync vs missing draft (2026-07-23)
+
+- **No draft after analyze** (“No draft yet” / Generate response) despite classify succeeding — investigate draft timeout, parrot reject, include_draft path, and UI mapping; deferred while history-sync stuck state is fixed first
+
+## Deferred from: spec-fix-stuck-history-sync-progress review (2026-07-23)
+
+- `_inflight_profiles` is process-local — multi-worker hub deployments can heal a live sync from another process
+- Stale-inflight heal discards the lock flag but cannot stop the daemon Graph thread (last-writer-wins if it continues)
+- OBO token acquisition still has no progress heartbeat *before* token exchange (only after)
+- Soft warning when orphan-with-chunks recovers to `ready` without surfacing interrupted-refresh error
+
 ## Deferred from: spec-profile-sync-status-updates review (2026-07-23)
 
 - Message counts cannot rise during Graph fetch until list API exposes pagination progress (fetch completes then jumps once)
