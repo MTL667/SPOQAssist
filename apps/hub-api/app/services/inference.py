@@ -188,6 +188,23 @@ class StubInferenceClient:
                     category=signals.category,
                     availability_prompt=availability_prompt,
                 )
+                # Mirror the classify+draft path: analyze calls this branch for the
+                # second (draft) pass after classification, so markers/why must land here.
+                if parts.split:
+                    signals.why.append(
+                        {
+                            "code": "thread_latest",
+                            "text": "Draft answers the latest message; full mail thread used as context only.",
+                        }
+                    )
+                if behavior_summary and behavior_summary.strip():
+                    signals.draft += "\n\n[mailbox-profile-applied]"
+                    signals.why.append(
+                        {
+                            "code": "mailbox_profile",
+                            "text": "Draft guided by cached mailbox behavior summary.",
+                        }
+                    )
             elif include_draft:
                 signals.draft = None
             return signals

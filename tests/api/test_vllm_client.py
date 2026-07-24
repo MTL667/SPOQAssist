@@ -333,11 +333,14 @@ class TestRetrieveDimMismatch:
         chunk_4096.embedding_json = json.dumps([0.2] * 4096)
         chunk_4096.chunk_text = "new chunk"
 
-        # db.execute(select(...)).scalars() returns an iterable
+        # db.execute(select(...)).scalars() returns an iterable for in-memory path.
+        # Force pgvector path to fail so retrieve falls back to in-memory cosine
+        # (default MagicMock.all() is truthy-but-empty and would skip the fallback).
         mock_scalars = MagicMock()
         mock_scalars.__iter__ = MagicMock(return_value=iter([chunk_1024, chunk_4096]))
         mock_execute = MagicMock()
         mock_execute.scalars.return_value = mock_scalars
+        mock_execute.all.side_effect = Exception("pgvector unavailable")
         mock_db.execute.return_value = mock_execute
 
         # Mock client that returns 4096-dim embeddings
