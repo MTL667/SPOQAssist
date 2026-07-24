@@ -1,0 +1,25 @@
+[Unit]
+Description=vLLM Reranker Service (Qwen3-Reranker-4B pooling /v1/rerank)
+After=vllm-embed.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=on-failure
+RestartSec=30
+ExecStartPre=-/usr/bin/docker rm -f vllm-reranker
+# Preferred unit once sudo is available. Until then, the image wrapper in
+# infra/dgx/vllm-reranker makes the existing unit start pooling mode.
+ExecStart=/usr/bin/docker run --rm --name vllm-reranker \
+  --gpus all --ipc=host \
+  -v /opt/spoqsense/models/Qwen3-Reranker-4B:/model \
+  -v /opt/spoqsense/config/templates/qwen3_reranker.jinja:/templates/qwen3_reranker.jinja:ro \
+  -v /opt/spoqsense/config/start-reranker.sh:/start-reranker.sh:ro \
+  -p 8004:8000 \
+  --entrypoint /bin/bash \
+  vllm/vllm-openai:stock \
+  /start-reranker.sh
+ExecStop=/usr/bin/docker stop vllm-reranker
+
+[Install]
+WantedBy=multi-user.target

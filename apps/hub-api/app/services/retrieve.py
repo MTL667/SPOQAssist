@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import time
 
 import httpx
 from sqlalchemy import select, text
@@ -12,6 +13,9 @@ from app.domain.models import MailChunk, RoutingEdge
 from app.services.inference import InferenceClient, get_embedding_dim
 
 logger = logging.getLogger(__name__)
+
+# After 404/405, skip rerank briefly so a mid-restart does not burn the process lifetime.
+_RERANKER_DISABLE_TTL_S = 300.0
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -133,6 +137,7 @@ def _retrieve_in_memory(
 
 
 _reranker_disabled = False
+_reranker_disabled_until = 0.0
 
 
 def _cosine_top(candidates: list[tuple[float, str]], limit: int) -> list[str]:
@@ -142,13 +147,36 @@ def _cosine_top(candidates: list[tuple[float, str]], limit: int) -> list[str]:
     return [text for _, text in candidates[: min(3, limit)]]
 
 
+def _reranker_is_disabled() -> bool:
+    global _reranker_disabled, _reranker_disabled_until
+    if not _reranker_disabled:
+        return False
+    if time.monotonic() >= _reranker_disabled_until:
+        _reranker_disabled = False
+        _reranker_disabled_until = 0.0
+        logger.info("reranker_reenabled")
+        return False
+    return True
+
+
+def _disable_reranker(*, status: int, url: str) -> None:
+    global _reranker_disabled, _reranker_disabled_until
+    _reranker_disabled = True
+    _reranker_disabled_until = time.monotonic() + _RERANKER_DISABLE_TTL_S
+    logger.info(
+        "reranker_disabled status=%s url=%s ttl_s=%.0f",
+        status,
+        url,
+        _RERANKER_DISABLE_TTL_S,
+    )
+
+
 def _rerank(query: str, candidates: list[tuple[float, str]], limit: int) -> list[str]:
     """Rerank candidates using Qwen3-Reranker-4B if available (vLLM mode)."""
-    global _reranker_disabled
     from app.core.config import get_settings
 
     settings = get_settings()
-    if settings.inference_mode.lower() != "vllm" or _reranker_disabled:
+    if settings.inference_mode.lower() != "vllm" or _reranker_is_disabled():
         return _cosine_top(candidates, limit)
 
     # Prefer dedicated reranker host when configured; never burn 10s on a known-404 path.
@@ -163,7 +191,7 @@ def _rerank(query: str, candidates: list[tuple[float, str]], limit: int) -> list
         return []
 
     try:
-        with httpx.Client(timeout=2.0) as client:
+        with httpx.Client(timeout=5.0) as client:
             resp = client.post(
                 f"{rerank_base}/rerank",
                 json={
@@ -174,12 +202,7 @@ def _rerank(query: str, candidates: list[tuple[float, str]], limit: int) -> list
                 },
             )
             if resp.status_code in (404, 405):
-                _reranker_disabled = True
-                logger.info(
-                    "reranker_disabled status=%s url=%s",
-                    resp.status_code,
-                    rerank_base,
-                )
+                _disable_reranker(status=resp.status_code, url=rerank_base)
                 return _cosine_top(candidates, limit)
             if resp.status_code >= 400:
                 logger.info("reranker_http_error status=%s", resp.status_code)
