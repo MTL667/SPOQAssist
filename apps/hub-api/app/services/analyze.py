@@ -28,6 +28,7 @@ from app.services.retrieve import lookup_learned_route, retrieve_similar
 from app.services.scheduling import (
     extract_attendee_emails,
     find_free_slots,
+    has_scheduling_intent,
     parse_duration_minutes,
     parse_meeting_window,
 )
@@ -291,14 +292,22 @@ def run_analyze(
         mailbox_email,
     )
 
-    if body.include_draft and signals.category == "meeting":
+    # Consult the calendar for genuine scheduling mails even when the classifier
+    # labels them something other than "meeting" (e.g. "action_required").
+    if body.include_draft and (
+        signals.category == "meeting"
+        or has_scheduling_intent(loaded.subject, loaded.body)
+    ):
         t0 = time.perf_counter()
         try:
             window_start, window_end = parse_meeting_window(
                 loaded.subject, loaded.body
             )
             duration_minutes = parse_duration_minutes(loaded.subject, loaded.body)
-            pad = timedelta(days=14)
+            # Pad wide enough to cover the before/after side-search when the
+            # requested window is fully blocked (~14 office days ≈ ~20 calendar
+            # days); 21 keeps proposed slots inside the fetched busy horizon.
+            pad = timedelta(days=21)
             busy_start = (window_start - pad).isoformat()
             busy_end = (window_end + pad).isoformat()
             graph = get_mail_graph_client()
@@ -430,7 +439,7 @@ def run_analyze(
         actions.append("reply")
     if route:
         actions.append("forward")
-    if suggestion.category == "meeting" and proposed_slots:
+    if proposed_slots:
         actions.append("schedule")
 
     timings["total_ms"] = _ms_since(total_start)

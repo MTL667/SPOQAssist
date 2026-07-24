@@ -23,6 +23,7 @@ AI_DISCLOSURE_FOOTER = (
     "\n\n—\nThis message was prepared with assistance from SpoqSense (company AI)."
 )
 _BRUSSELS = ZoneInfo("Europe/Brussels")
+_MAX_CALENDAR_VIEW_PAGES = 20
 
 
 @dataclass(frozen=True)
@@ -841,8 +842,14 @@ class OboMailGraphClient:
         # Prefer getSchedule for free/busy; fall back to calendarView.
         schedule_payload = {
             "schedules": [mailbox_email],
-            "startTime": {"dateTime": start_iso.replace("Z", ""), "timeZone": "Europe/Brussels"},
-            "endTime": {"dateTime": end_iso.replace("Z", ""), "timeZone": "Europe/Brussels"},
+            "startTime": {
+                "dateTime": _graph_local_datetime(start_iso),
+                "timeZone": "Europe/Brussels",
+            },
+            "endTime": {
+                "dateTime": _graph_local_datetime(end_iso),
+                "timeZone": "Europe/Brussels",
+            },
             "availabilityViewInterval": 30,
         }
         try:
@@ -868,7 +875,9 @@ class OboMailGraphClient:
                         "$select": "start,end,showAs,isAllDay",
                         "$top": "100",
                     }
-                    while url:
+                    pages = 0
+                    while url and pages < _MAX_CALENDAR_VIEW_PAGES:
+                        pages += 1
                         resp = client.get(url, headers=headers, params=params)
                         if resp.status_code in (401, 403):
                             self._raise_calendar_status(
@@ -882,13 +891,30 @@ class OboMailGraphClient:
                                 action="busy",
                                 body_text=resp.text[:500],
                             )
-                        page = resp.json()
+                        try:
+                            page = resp.json()
+                        except ValueError:
+                            raise AppError(
+                                code="CONNECTOR_FAILURE",
+                                message="Graph calendarView returned non-JSON body.",
+                                status_code=502,
+                                retryable=True,
+                            ) from None
                         busy_rows.extend(page.get("value") or [])
                         next_link = page.get("@odata.nextLink")
                         url = str(next_link) if next_link else None
                         params = None
                     return _busy_from_calendar_view({"value": busy_rows})
-                return _busy_from_get_schedule(resp.json())
+                try:
+                    schedule_data = resp.json()
+                except ValueError:
+                    raise AppError(
+                        code="CONNECTOR_FAILURE",
+                        message="Graph getSchedule returned non-JSON body.",
+                        status_code=502,
+                        retryable=True,
+                    ) from None
+                return _busy_from_get_schedule(schedule_data)
         except AppError:
             raise
         except httpx.HTTPError:

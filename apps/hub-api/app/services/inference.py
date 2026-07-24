@@ -345,7 +345,7 @@ def _apply_stub_availability(
     category: str,
     availability_prompt: str | None,
 ) -> str | None:
-    if not draft or category != "meeting" or not (availability_prompt or "").strip():
+    if not draft or not (availability_prompt or "").strip():
         return draft
     prompt = availability_prompt or ""
     # Prefer first proposed slot label for deterministic tests.
@@ -507,9 +507,7 @@ class OllamaInferenceClient:
         profile_block = (behavior_summary or "").strip() or "(none cached)"
         lang = detect_reply_language(latest, behavior_summary)
         lang_name = _lang_code_to_name(lang)
-        if category == "meeting":
-            intent_block = _meeting_intent_block(availability_prompt)
-        elif category == "forward" and route_email:
+        if category == "forward" and route_email:
             intent_block = (
                 f"Intent: FORWARD. Write a short reply acknowledging you will forward "
                 f"internally to {route_email}. Do not invent other recipients."
@@ -519,6 +517,11 @@ class OllamaInferenceClient:
                 "Intent: possible FORWARD, but no known internal route yet. "
                 "Reply politely; ask a clarifying question if needed. Do not invent recipients."
             )
+        elif category == "meeting" or (availability_prompt or "").strip():
+            # availability_prompt is only set when the calendar was consulted for a
+            # scheduling mail — honour it even if the label isn't "meeting".
+            # Forward intent takes precedence above.
+            intent_block = _meeting_intent_block(availability_prompt)
         else:
             intent_block = (
                 "Intent: normal REPLY. Answer ONLY the LATEST message. "
@@ -1081,9 +1084,7 @@ class VLLMInferenceClient:
         profile_block = (behavior_summary or "").strip() or "(none cached)"
         lang = detect_reply_language(latest, behavior_summary)
         lang_name = _lang_code_to_name(lang)
-        if category == "meeting":
-            intent_block = _meeting_intent_block(availability_prompt)
-        elif category == "forward" and route_email:
+        if category == "forward" and route_email:
             intent_block = (
                 f"Intent: FORWARD. Write a short reply acknowledging you will forward "
                 f"internally to {route_email}. Do not invent other recipients."
@@ -1093,6 +1094,11 @@ class VLLMInferenceClient:
                 "Intent: possible FORWARD, but no known internal route yet. "
                 "Reply politely; ask a clarifying question if needed. Do not invent recipients."
             )
+        elif category == "meeting" or (availability_prompt or "").strip():
+            # availability_prompt is only set when the calendar was consulted for a
+            # scheduling mail — honour it even if the label isn't "meeting".
+            # Forward intent takes precedence above.
+            intent_block = _meeting_intent_block(availability_prompt)
         else:
             intent_block = (
                 "Intent: normal REPLY. Answer ONLY the LATEST message. "

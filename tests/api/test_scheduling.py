@@ -286,6 +286,71 @@ def test_calendar_consent_fail_on_schedule(app_client, make_token):
     assert failed.json()["error"]["code"] == "CONSENT_REQUIRED"
 
 
+def test_has_scheduling_intent_unit():
+    from app.services.scheduling import has_scheduling_intent
+
+    # True: genuine scheduling verbs/nouns/phrases (NL+EN).
+    assert has_scheduling_intent(
+        "Re: Inventaris",
+        "Kunnen we een moment voorzien voor 31/8 om Robbe opleiding te geven?",
+    )
+    assert has_scheduling_intent("", "Can we schedule a meeting next week?")
+    assert has_scheduling_intent("Vergadering volgende week", "")
+    assert has_scheduling_intent("", "Wanneer past het jou?")
+    assert has_scheduling_intent("", "Laat gerust je beschikbaarheid weten.")
+    assert has_scheduling_intent("", "Kan je dit inplannen?")
+    assert has_scheduling_intent("", "Can we reschedule for next week?")
+    assert has_scheduling_intent("", "Ben je beschikbaar volgende week?")
+    assert has_scheduling_intent("", "Are you available next Tuesday?")
+
+    # False: a mere date or unrelated content must NOT trigger a consult.
+    assert not has_scheduling_intent("Factuur 123", "De factuur vervalt op 31/8. Gelieve te betalen.")
+    assert not has_scheduling_intent("Nieuwsbrief", "Hier is onze update voor juli 2026.")
+    assert not has_scheduling_intent("", "Bedankt voor je hulp gisteren.")
+    # Review-hardening: broad tokens must not fire on non-scheduling phrasing.
+    assert not has_scheduling_intent("", "I'm available to help if you need anything.")
+    assert not has_scheduling_intent("Voorraad", "Het product is nu beschikbaar in de webshop.")
+    assert not has_scheduling_intent("Ads", "Check our Facebook ads campaign results.")
+    assert not has_scheduling_intent("Doc", "Kevin invited you to view the document.")
+
+
+def test_scheduling_intent_fires_consult_when_not_category_meeting(app_client, make_token):
+    """Screenshot case: mail labelled action_required but with scheduling intent."""
+    token = make_token(oid=OWNER_OID)
+    profile_id = _connect(app_client, token, "mislabel@contoso.com")
+    _index_history(app_client, token, profile_id)
+
+    from app.services.mail_graph import StubMailGraphClient, set_mail_graph_client
+
+    stub = StubMailGraphClient()
+    set_mail_graph_client(stub)
+
+    response = app_client.post(
+        f"/v1/mailbox_profiles/{profile_id}/analyze",
+        headers=_auth(token),
+        json={
+            "message_id": "msg-mislabel",
+            "include_draft": True,
+            "subject": "Re: Inventaris 2047111",
+            "body": (
+                "Kunnen we een moment voorzien voor 31/8 om Robbe opleiding te geven "
+                "voor het gebruik van de app voor inventarisatie aub?"
+            ),
+            "sender": "lieselot@example.com",
+            "attachment_names": [],
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    # The stub classifier does NOT label this "meeting" (no meeting keyword),
+    # but scheduling intent must still trigger the calendar consult.
+    assert body["category"] != "meeting"
+    assert stub.get_busy_calls, "calendar consult must run on scheduling intent"
+    assert body["proposed_slots"], body
+    assert "schedule" in (body.get("actions") or [])
+    assert "Available time:" in (body.get("draft") or "")
+
+
 def test_parse_and_find_free_slots_unit():
     from app.services.scheduling import BusyInterval, find_free_slots, parse_meeting_window
 

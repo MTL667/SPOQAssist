@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 
 from fastapi import APIRouter
@@ -16,9 +17,14 @@ from app.services import audit as audit_svc
 from app.services.mail_graph import get_mail_graph_client
 from app.services.scheduling import extract_attendee_emails
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/v1/mailbox_profiles", tags=["schedule"])
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+_MAX_ATTENDEES = 25
 
 
 def _fingerprint(
@@ -27,26 +33,37 @@ def _fingerprint(
     slot_start: str,
     slot_end: str,
     attendees: list[str],
-    subject: str,
 ) -> str:
+    # Subject is server-derived (Graph re-fetch / draft fallback) and may differ
+    # across retries; keep it out of the fingerprint so replays stay stable.
     payload = {
         "suggestion_id": suggestion_id,
         "action": "schedule",
         "slot_start": slot_start,
         "slot_end": slot_end,
-        "attendees": attendees,
-        "subject": subject,
+        "attendees": sorted(attendees),
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _valid_attendees(attendees: list[str]) -> list[str]:
-    cleaned = [a.strip().lower() for a in attendees if a and a.strip()]
+    cleaned: list[str] = []
+    for a in attendees:
+        email = (a or "").strip().lower()
+        if email and email not in cleaned:
+            cleaned.append(email)
     if not cleaned:
         raise AppError(
             code="VALIDATION_ERROR",
             message="At least one attendee email is required.",
+            status_code=422,
+            retryable=False,
+        )
+    if len(cleaned) > _MAX_ATTENDEES:
+        raise AppError(
+            code="VALIDATION_ERROR",
+            message=f"Too many attendees (max {_MAX_ATTENDEES}).",
             status_code=422,
             retryable=False,
         )
@@ -95,16 +112,19 @@ async def confirm_schedule(
             status_code=404,
             retryable=False,
         )
-    if (suggestion.category or "").lower() != "meeting":
+    envelope = _load_slots_envelope(getattr(suggestion, "proposed_slots_json", None))
+    slots = envelope["slots"]
+    # Scheduling is available whenever the suggestion carries proposed slots
+    # (the calendar was consulted), regardless of the classifier's category
+    # label. The slot-match check below enforces the slot actually came from
+    # this suggestion.
+    if not slots:
         raise AppError(
             code="VALIDATION_ERROR",
-            message="Schedule is only available for meeting suggestions.",
+            message="Schedule is only available for suggestions with proposed times.",
             status_code=422,
             retryable=False,
         )
-
-    envelope = _load_slots_envelope(getattr(suggestion, "proposed_slots_json", None))
-    slots = envelope["slots"]
     slot_start = (body.slot_start or "").strip()
     slot_end = (body.slot_end or "").strip()
     matched = None
@@ -114,17 +134,33 @@ async def confirm_schedule(
         if str(slot.get("start") or "") == slot_start and str(slot.get("end") or "") == slot_end:
             matched = slot
             break
-    if matched is None and slots and isinstance(slots[0], dict):
-        first = slots[0]
-        if (
-            str(first.get("start") or "") == slot_start
-            and str(first.get("end") or "") == slot_end
-        ):
-            matched = first
     if matched is None:
         raise AppError(
             code="VALIDATION_ERROR",
             message="Chosen slot must match a proposed slot from the suggestion.",
+            status_code=422,
+            retryable=False,
+        )
+
+    # Validate slot ordering + not-in-the-past BEFORE reserving an idempotency key,
+    # so a bad payload never leaves an orphan reservation that blocks legit retries.
+    from datetime import datetime, timezone
+
+    from app.services.mail_graph import _parse_graph_dt
+
+    start_dt = _parse_graph_dt(slot_start)
+    end_dt = _parse_graph_dt(slot_end)
+    if start_dt is None or end_dt is None or end_dt <= start_dt:
+        raise AppError(
+            code="VALIDATION_ERROR",
+            message="slot_end must be after slot_start.",
+            status_code=422,
+            retryable=False,
+        )
+    if end_dt <= datetime.now(timezone.utc):
+        raise AppError(
+            code="VALIDATION_ERROR",
+            message="Cannot schedule a meeting in the past.",
             status_code=422,
             retryable=False,
         )
@@ -141,8 +177,10 @@ async def confirm_schedule(
     allowed.discard((access.profile.email or "").strip().lower())
     if body.attendees:
         attendees = _valid_attendees(body.attendees)
+        # Client-supplied attendees must be a subset of the analyzed mail participants.
+        # If we have no participants to check against, reject overrides (fail closed).
         extra = set(attendees) - allowed
-        if extra and allowed:
+        if extra:
             raise AppError(
                 code="VALIDATION_ERROR",
                 message="Attendees must be from the analyzed mail participants.",
@@ -177,9 +215,6 @@ async def confirm_schedule(
     if not subject:
         first_line = (suggestion.draft or "").strip().splitlines()
         subject = first_line[0][:120] if first_line else "Meeting"
-    if not subject.lower().startswith("re:"):
-        # Prefer mail theme as event title (not a reply prefix for calendar).
-        pass
     subject = subject[:500] or "Meeting"
 
     fp = _fingerprint(
@@ -187,7 +222,6 @@ async def confirm_schedule(
         slot_start=slot_start,
         slot_end=slot_end,
         attendees=attendees,
-        subject=subject,
     )
 
     existing = ai_store.get_idempotency(
@@ -242,22 +276,6 @@ async def confirm_schedule(
             idempotent_replay=True,
         )
 
-    # Validate slot ordering before Graph mutate.
-    try:
-        from app.services.mail_graph import _parse_graph_dt
-
-        start_dt = _parse_graph_dt(slot_start)
-        end_dt = _parse_graph_dt(slot_end)
-        if start_dt is None or end_dt is None or end_dt <= start_dt:
-            raise AppError(
-                code="VALIDATION_ERROR",
-                message="slot_end must be after slot_start.",
-                status_code=422,
-                retryable=False,
-            )
-    except AppError:
-        raise
-
     kind = MailboxKind(access.profile.kind)
     client = get_mail_graph_client()
     event_body = (
@@ -277,9 +295,19 @@ async def confirm_schedule(
         body=event_body,
     )
 
-    ai_store.complete_idempotency(
-        db, row=reserved, graph_message_id=result.graph_event_id
-    )
+    # The Graph event already exists; persisting the id must not make us "lose" it.
+    # If completion fails, still return the created id so the client does not retry
+    # (a retry with a new key would create a duplicate event).
+    try:
+        ai_store.complete_idempotency(
+            db, row=reserved, graph_message_id=result.graph_event_id
+        )
+    except Exception:
+        logger.exception(
+            "schedule_complete_idempotency_failed suggestion_id=%s event_id=%s",
+            suggestion.id,
+            result.graph_event_id,
+        )
     audit_svc.write_audit(
         db,
         mailbox_profile_id=access.profile.id,

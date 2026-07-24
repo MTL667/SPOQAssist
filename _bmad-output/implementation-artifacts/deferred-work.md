@@ -75,6 +75,12 @@
 - RoutePicker listbox a11y roles/keyboard — polish later
 - Prompt-injection hardening for instruct drafts — broader inference security pass
 
+## Deferred from: code review of spec-calendar-aware-meeting-proposals (2026-07-24)
+
+- Hardcoded Europe/Brussels office hours/labels/getSchedule/event tz for every mailbox — multi-timezone owner support is post-pilot (spec pins Brussels)
+- Add-in schedules only `proposedSlots[0]` and shows an "mail participants" attendee placeholder in the confirm dialog — real slot picker + resolved attendee preview deferred
+- getSchedule availabilityView-only responses and tentative/workingElsewhere lumping (currently conservative-busy)
+
 ## Deferred from: spec-calendar-aware-meeting-proposals review (2026-07-24)
 
 - Slot picker UI when multiple `proposed_slots` exist (MVP books first after confirm)
@@ -82,6 +88,10 @@
 - Shared-mailbox calendar identity / Calendars.Read.Shared (Ask First)
 - Richer vacation-block detection inside a partially free deadline window
 - Least-privilege split: consult with Read-only vs create with ReadWrite consent stages
+
+## Deferred from: spec-fix-calendar-trigger-scheduling-intent review (2026-07-24)
+
+- `has_scheduling_intent` is NL/EN only — genuine FR/DE scheduling mails won't trigger the calendar consult (post-pilot multilingual detection).
 
 ## Deferred from: spec-analyze-latency-under-10s review (2026-07-23)
 

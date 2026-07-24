@@ -83,6 +83,27 @@ context:
 - Given a meeting suggestion with proposed slots, when the user confirms Schedule, then Graph creates one event with mail-derived attendees and theme and the UI reports success.
 - Given missing Calendar consent, when Schedule is attempted (or consult fails closed), then the user sees a consent/scopes error and no false “scheduled” state.
 
+### Review Findings
+
+_Code review 2026-07-24 (blind + edge + acceptance layers)._
+
+- [x] [Review][Decision] Shared-mailbox calendar consult uses `mailbox_email` — RESOLVED: allow shared-mailbox calendar (consult + create) same as personal; no gating [`schedule.py`, `mail_graph.py`]
+- [x] [Review][Patch] Attendee allowlist bypass — `if extra and allowed:` skips check when allowed empty; also cap attendee count [`schedule.py:145`]
+- [x] [Review][Patch] Duplicate event risk — Graph create succeeds but `complete_idempotency` failure leaves orphan reservation; retry advice creates second event [`schedule.py:244`]
+- [x] [Review][Patch] Slot end>start validation runs after `reserve_idempotency` — failure poisons the key [`schedule.py`]
+- [x] [Review][Patch] No past-slot guard — stale/replayed slot can create an event in the past [`schedule.py`]
+- [x] [Review][Patch] Dead redundant first-slot match block after the loop [`schedule.py:117`]
+- [x] [Review][Patch] No-op `if not subject...: pass` dead branch [`schedule.py:180`]
+- [x] [Review][Patch] Fingerprint includes server-derived subject → spurious 409 when subject differs across retries [`schedule.py:168`]
+- [x] [Review][Patch] getSchedule sends offset dateTime (`.replace("Z","")` keeps `+02:00`) with explicit timeZone — use `_graph_local_datetime` [`mail_graph.py:823`]
+- [x] [Review][Patch] Busy path `resp.json()` unguarded for non-JSON 2xx [`mail_graph.py`]
+- [x] [Review][Patch] calendarView pagination loop has no page cap [`mail_graph.py`]
+- [x] [Review][Patch] Deadline regex matches ratios like `24/7` as a date [`scheduling.py:170`]
+- [x] [Review][Patch] Duration parser matches unrelated `in 2 hours` / `within 30 minutes` as meeting length [`scheduling.py:225`]
+- [x] [Review][Patch] Blocked-window side search can propose slots beyond fetched busy horizon — widen busy fetch pad [`analyze.py:299`, `scheduling.py`]
+- [x] [Review][Defer] Hardcoded Europe/Brussels for all mailboxes (per-spec for pilot; multi-tz post-pilot)
+- [x] [Review][Defer] UI books first slot only + attendee preview shows "mail participants" placeholder (slot picker deferred)
+
 ## Spec Change Log
 
 ## Design Notes

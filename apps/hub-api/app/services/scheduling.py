@@ -167,14 +167,21 @@ def _detect_deadline(text: str, *, now: datetime) -> date | None:
     now = _ensure_aware(now)
     year = now.year
 
-    m = re.search(
+    for m in re.finditer(
         r"\b(\d{1,2})\s*/\s*(\d{1,2})(?:\s*/\s*(\d{2,4}))?\b",
         text,
-    )
-    if m:
+    ):
         day_i, month_i = int(m.group(1)), int(m.group(2))
+        # Swap US-style month/day first (e.g. "8/13" → day 13, month 8).
         if month_i > 12 and day_i <= 12:
             day_i, month_i = month_i, day_i
+        if not m.group(3):
+            # No explicit year: require a plausible day/month, and skip common
+            # non-date ratios like "24/7" (round-the-clock, not July 24).
+            if not (1 <= month_i <= 12 and 1 <= day_i <= 31):
+                continue
+            if day_i == 24 and month_i == 7:
+                continue
         y = year
         if m.group(3):
             y = int(m.group(3))
@@ -183,11 +190,13 @@ def _detect_deadline(text: str, *, now: datetime) -> date | None:
         try:
             d = date(y, month_i, day_i)
         except ValueError:
-            d = None
-        if d is not None:
-            if d < now.date() and not m.group(3):
+            continue
+        if d < now.date() and not m.group(3):
+            try:
                 d = date(y + 1, month_i, day_i)
-            return d
+            except ValueError:
+                continue
+        return d
 
     for name, month_i in _MONTH_NAMES.items():
         m = re.search(
@@ -222,15 +231,35 @@ def _detect_deadline(text: str, *, now: datetime) -> date | None:
     return None
 
 
+_DURATION_KEYWORDS = (
+    r"\b(?:meeting|afspraak|call|gesprek|duur|duration|vergadering|meet)\b"
+)
+
+
+def _near_duration_keyword(text: str, span: tuple[int, int], *, window: int = 40) -> bool:
+    """True when a duration-context keyword sits close to the matched span.
+
+    Avoids reading phrases like "in 2 hours" / "within 30 minutes" (a delay or
+    deadline, not the meeting length) as an explicit duration.
+    """
+    start, end = span
+    ctx = text[max(0, start - window) : min(len(text), end + window)]
+    return re.search(_DURATION_KEYWORDS, ctx, flags=re.IGNORECASE) is not None
+
+
 def parse_duration_minutes(subject: str, body: str) -> int:
-    """Parse an explicit duration from mail text; default 60 minutes."""
+    """Parse an explicit duration from mail text; default 60 minutes.
+
+    Only honours a duration when it appears near a meeting/duration keyword;
+    otherwise falls back to the default.
+    """
     text = f"{subject or ''}\n{body or ''}"
     m = re.search(
         r"\b(\d{1,2}(?:[.,]\d+)?)\s*(?:uur|uren|hours?|hrs?)\b",
         text,
         flags=re.IGNORECASE,
     )
-    if m:
+    if m and _near_duration_keyword(text, m.span()):
         raw = m.group(1).replace(",", ".")
         try:
             hours = float(raw)
@@ -243,7 +272,7 @@ def parse_duration_minutes(subject: str, body: str) -> int:
         text,
         flags=re.IGNORECASE,
     )
-    if m:
+    if m and _near_duration_keyword(text, m.span()):
         try:
             mins = int(m.group(1))
         except ValueError:
@@ -251,6 +280,60 @@ def parse_duration_minutes(subject: str, body: str) -> int:
         if mins > 0:
             return max(15, min(480, mins))
     return DEFAULT_DURATION_MINUTES
+
+
+# Strong scheduling signals (NL+EN). Deliberately excludes bare "gesprek"/"sessie"
+# and the mere presence of a date, to avoid needless calendar/Graph consults.
+_SCHEDULING_PATTERNS = (
+    r"meetings?",
+    r"\bmeet\b",
+    r"\bcall\b",
+    r"video\s*call",
+    r"conference call",
+    r"afspra(?:ak|ken)",
+    r"vergader",
+    r"uitnodig",
+    r"\binvit(?:e|ation)\b",
+    r"\bagenda\b",
+    r"calendar",
+    r"kalender",
+    r"inplann",
+    r"inboeken",
+    # No leading \b so "reschedule" / "rescheduling" also match.
+    r"schedul",
+    r"verzet(?:ten)?",
+    r"verplaats",
+    r"appointment",
+    r"moment\s+(?:voorzien|vinden|inplannen|prikken|zoeken)",
+    r"tijd\s+(?:vinden|voorzien|prikken|zoeken)",
+    r"datum\s+prikken",
+    # Availability only when phrased as scheduling, not "product is beschikbaar".
+    r"beschikbaarheid",
+    r"availabilit",
+    r"(?:ben|bent|zijn)\s+(?:je|jij|jullie|u|we|wij)\b[^.?!]{0,30}\bbeschikbaar",
+    r"(?:are|is|you)\b[^.?!]{0,20}\bavailable\b",
+    r"past het",
+    r"schikt (?:het|dit|dat|je|jou|u)",
+    r"wanneer (?:kan|kun|past|schikt|ben je|zou)",
+    r"welk(?:e)? (?:datum|tijdstip|moment|uur)",
+    r"let'?s meet",
+    r"let us meet",
+    r"find a time",
+    r"\bbook a\b",
+    r"boek een",
+)
+_SCHEDULING_RE = re.compile("|".join(_SCHEDULING_PATTERNS), re.IGNORECASE)
+
+
+def has_scheduling_intent(subject: str, body: str) -> bool:
+    """Conservative detector for genuine meeting/appointment scheduling intent.
+
+    Matches scheduling verbs/nouns/phrases (NL+EN), NOT the mere presence of a
+    date. Used to trigger the calendar consult even when the classifier labels a
+    scheduling mail as something other than "meeting".
+    """
+    text = f"{subject or ''}\n{body or ''}"
+    return _SCHEDULING_RE.search(text) is not None
 
 
 def parse_meeting_window(
