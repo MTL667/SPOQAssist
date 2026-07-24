@@ -28,6 +28,12 @@ export interface AttachmentSummaryOut {
   is_scan?: boolean;
 }
 
+export interface ProposedSlotOut {
+  start: string;
+  end: string;
+  label: string;
+}
+
 export interface SuggestionOut {
   suggestion_id: string;
   mailbox_profile_id: string;
@@ -44,6 +50,8 @@ export interface SuggestionOut {
   attachment_summaries?: AttachmentSummaryOut[];
   actions?: string[];
   extracted_actions?: ActionItemOut[];
+  proposed_slots?: ProposedSlotOut[];
+  availability_note?: string | null;
   precompute_status?: string | null;
   timings?: Record<string, number>;
 }
@@ -63,6 +71,12 @@ export interface AttachmentSummaryViewModel {
   isScan: boolean;
 }
 
+export interface ProposedSlotViewModel {
+  start: string;
+  end: string;
+  label: string;
+}
+
 export interface SuggestionViewModel {
   suggestionId: string;
   mailboxProfileId: string;
@@ -79,6 +93,8 @@ export interface SuggestionViewModel {
   attachmentSummaries: AttachmentSummaryViewModel[];
   actions: string[];
   extractedActions: ActionItemViewModel[];
+  proposedSlots: ProposedSlotViewModel[];
+  availabilityNote: string | null;
   precomputeStatus: string | null;
   timings: Record<string, number>;
 }

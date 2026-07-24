@@ -12,6 +12,7 @@ from app.api.feedback import router as feedback_router
 from app.api.health import router as health_router
 from app.api.mailbox_profiles import router as mailbox_profiles_router
 from app.api.me import router as me_router
+from app.api.schedule import router as schedule_router
 from app.core.errors import AppError, RequestIdMiddleware, app_error_handler
 from app.core.logging import configure_logging
 from app.db.session import init_db
@@ -54,6 +55,7 @@ app.include_router(mailbox_profiles_router)
 app.include_router(analyze_router)
 app.include_router(feedback_router)
 app.include_router(confirm_router)
+app.include_router(schedule_router)
 app.include_router(actions_router)
 app.include_router(admin_ai_router)
 app.include_router(admin_ops_router)

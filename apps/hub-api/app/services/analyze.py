@@ -15,14 +15,22 @@ from app.domain.models import Suggestion
 from app.domain.schemas import (
     AnalyzeRequest,
     AttachmentWarning,
+    ProposedSlotOut,
     RouteOut,
     SuggestionOut,
     WhyItem,
 )
 from app.services.inference import AnalyzeSignals, get_inference_client
 from app.services.learning import pattern_key_from_sender
+from app.services.mail_graph import get_mail_graph_client
 from app.services.mail_read import load_message_for_analyze
 from app.services.retrieve import lookup_learned_route, retrieve_similar
+from app.services.scheduling import (
+    extract_attendee_emails,
+    find_free_slots,
+    parse_duration_minutes,
+    parse_meeting_window,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +164,7 @@ def run_analyze(
         "graph_ms": 0,
         "retrieve_ms": 0,
         "classify_ms": 0,
+        "calendar_ms": 0,
         "draft_ms": 0,
         "total_ms": 0,
     }
@@ -272,6 +281,95 @@ def run_analyze(
     except Exception:
         logger.info("precompute_boost_skipped mailbox_profile_id=%s", mailbox_profile_id)
 
+    proposed_slots: list[ProposedSlotOut] = []
+    availability_note: str | None = None
+    availability_prompt: str | None = None
+    attendees = extract_attendee_emails(
+        loaded.sender,
+        getattr(loaded, "to_recipients", None),
+        getattr(loaded, "cc_recipients", None),
+        mailbox_email,
+    )
+
+    if body.include_draft and signals.category == "meeting":
+        t0 = time.perf_counter()
+        try:
+            window_start, window_end = parse_meeting_window(
+                loaded.subject, loaded.body
+            )
+            duration_minutes = parse_duration_minutes(loaded.subject, loaded.body)
+            pad = timedelta(days=14)
+            busy_start = (window_start - pad).isoformat()
+            busy_end = (window_end + pad).isoformat()
+            graph = get_mail_graph_client()
+            busy = graph.get_calendar_busy(
+                user_assertion=user_assertion,
+                tenant_id=tenant_id,
+                mailbox_kind=MailboxKind(mailbox_kind),
+                mailbox_email=mailbox_email,
+                graph_mailbox_id=graph_mailbox_id,
+                start_iso=busy_start,
+                end_iso=busy_end,
+            )
+            plan = find_free_slots(
+                busy,
+                window_start,
+                window_end,
+                duration_minutes=duration_minutes,
+            )
+            availability_prompt = plan.prompt_block
+            availability_note = plan.unavailability_note
+            proposed_slots = [
+                ProposedSlotOut(
+                    start=s.start_iso,
+                    end=s.end_iso,
+                    label=s.label,
+                )
+                for s in plan.slots
+            ]
+            signals.why = list(signals.why) + [
+                {
+                    "code": "calendar_consult",
+                    "text": (
+                        "Owner calendar consulted for free times."
+                        if not plan.requested_window_blocked
+                        else "Requested window blocked; proposed times before/after."
+                    ),
+                }
+            ]
+        except AppError as exc:
+            if exc.code in {"CONSENT_REQUIRED", "BAD_SCOPES", "CONNECTOR_FAILURE"}:
+                logger.info(
+                    "calendar_consult_unavailable code=%s mailbox_profile_id=%s",
+                    exc.code,
+                    mailbox_profile_id,
+                )
+                signals.why = list(signals.why) + [
+                    {
+                        "code": "calendar_unavailable",
+                        "text": "Calendar unavailable — draft without invented holds.",
+                    }
+                ]
+                proposed_slots = []
+                availability_note = None
+                availability_prompt = None
+            else:
+                raise
+        except Exception:
+            logger.exception(
+                "calendar_consult_failed mailbox_profile_id=%s", mailbox_profile_id
+            )
+            signals.why = list(signals.why) + [
+                {
+                    "code": "calendar_unavailable",
+                    "text": "Calendar unavailable — draft without invented holds.",
+                }
+            ]
+            proposed_slots = []
+            availability_note = None
+            availability_prompt = None
+        timings["calendar_ms"] = _ms_since(t0)
+
     if body.include_draft:
         t0 = time.perf_counter()
         signals = client.analyze_fast(
@@ -284,6 +382,7 @@ def run_analyze(
             include_draft=True,
             behavior_summary=behavior_summary,
             classification=signals,
+            availability_prompt=availability_prompt,
         )
         timings["draft_ms"] = _ms_since(t0)
 
@@ -291,6 +390,12 @@ def run_analyze(
     route_name = signals.route_name if isinstance(signals.route_name, str) else None
     if route_email and "@contoso.com" in route_email.lower():
         route_email, route_name = None, None
+
+    slots_envelope = {
+        "slots": [s.model_dump() for s in proposed_slots],
+        "attendees": attendees,
+        "subject": loaded.subject or "",
+    }
 
     suggestion = Suggestion(
         mailbox_profile_id=mailbox_profile_id,
@@ -305,6 +410,8 @@ def run_analyze(
         why_json=json.dumps(signals.why),
         history_status=signals.history_status.value,
         attachment_warnings_json=json.dumps([w.model_dump() for w in warnings]),
+        proposed_slots_json=json.dumps(slots_envelope),
+        availability_note=availability_note,
         created_by_oid=actor_oid,
     )
     db.add(suggestion)
@@ -323,13 +430,17 @@ def run_analyze(
         actions.append("reply")
     if route:
         actions.append("forward")
+    if suggestion.category == "meeting" and proposed_slots:
+        actions.append("schedule")
 
     timings["total_ms"] = _ms_since(total_start)
     logger.info(
-        "analyze_done mailbox_profile_id=%s total_ms=%s classify_ms=%s draft_ms=%s precompute=%s",
+        "analyze_done mailbox_profile_id=%s total_ms=%s classify_ms=%s "
+        "calendar_ms=%s draft_ms=%s precompute=%s",
         mailbox_profile_id,
         timings["total_ms"],
         timings["classify_ms"],
+        timings.get("calendar_ms", 0),
         timings["draft_ms"],
         precompute_status,
     )
@@ -354,6 +465,8 @@ def run_analyze(
         history_status=signals.history_status,
         attachment_warnings=warnings,
         actions=actions,
+        proposed_slots=proposed_slots,
+        availability_note=availability_note,
         precompute_status=precompute_status,
         timings=timings,
     )

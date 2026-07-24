@@ -36,6 +36,7 @@ export function SuggestionHero({
   onReject,
   onChangeRoute,
   onGenerateResponse,
+  onSchedule,
   onDismissAction,
 }: {
   suggestion: SuggestionViewModel;
@@ -44,12 +45,15 @@ export function SuggestionHero({
   onReject: () => void;
   onChangeRoute: () => void;
   onGenerateResponse: () => void;
+  onSchedule?: () => void;
   onDismissAction?: (actionId: string) => void;
 }): React.JSX.Element {
   const styles = useStyles();
   const action = primaryActionLabel(suggestion);
   const hasDraft = Boolean(suggestion.draft);
   const canGenerate = !hasDraft && suggestion.historyStatus !== "none";
+  const showSchedule =
+    suggestion.category === "meeting" && (suggestion.proposedSlots?.length || 0) > 0;
   return (
     <section className={styles.card} aria-label="High confidence suggestion">
       <Title3>Suggested action</Title3>
@@ -60,6 +64,11 @@ export function SuggestionHero({
         <Text block>
           Route to {suggestion.suggestedRoute.displayName || suggestion.suggestedRoute.email} (
           {suggestion.suggestedRoute.email})
+        </Text>
+      ) : null}
+      {suggestion.availabilityNote ? (
+        <Text className={styles.meta} block>
+          {suggestion.availabilityNote}
         </Text>
       ) : null}
       {hasDraft ? <Text className={styles.draft}>{suggestion.draft}</Text> : null}
@@ -88,8 +97,10 @@ export function SuggestionHero({
         onReject={onReject}
         onChangeRoute={onChangeRoute}
         onGenerateResponse={onGenerateResponse}
+        onSchedule={onSchedule}
         showChangeRoute={Boolean(suggestion.suggestedRoute)}
         showGenerateResponse={canGenerate}
+        showSchedule={showSchedule}
         hideAccept={!hasDraft && !suggestion.suggestedRoute}
       />
     </section>

@@ -75,6 +75,14 @@
 - RoutePicker listbox a11y roles/keyboard — polish later
 - Prompt-injection hardening for instruct drafts — broader inference security pass
 
+## Deferred from: spec-calendar-aware-meeting-proposals review (2026-07-24)
+
+- Slot picker UI when multiple `proposed_slots` exist (MVP books first after confirm)
+- Re-check free/busy at confirm-schedule time (stale slot risk after long delay)
+- Shared-mailbox calendar identity / Calendars.Read.Shared (Ask First)
+- Richer vacation-block detection inside a partially free deadline window
+- Least-privilege split: consult with Read-only vs create with ReadWrite consent stages
+
 ## Deferred from: spec-analyze-latency-under-10s review (2026-07-23)
 
 - `_embedding_dim` global cache has no invalidation when switching inference modes

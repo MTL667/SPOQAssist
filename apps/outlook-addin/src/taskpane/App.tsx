@@ -20,6 +20,7 @@ import {
 import {
   analyzeMessage,
   confirmOutbound,
+  confirmSchedule,
   connectMailbox,
   fetchHealth,
   fetchMailboxProfile,
@@ -163,13 +164,17 @@ export function App(): React.JSX.Element {
   const [suggestion, setSuggestion] = useState<SuggestionViewModel | null>(null);
   const [unavailableMessage, setUnavailableMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [editDraft, setEditDraft] = useState("");
   const [pickingRoute, setPickingRoute] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmBusy, setConfirmBusy] = useState(false);
-  const [pendingAction, setPendingAction] = useState<"send" | "forward">("send");
+  const [pendingAction, setPendingAction] = useState<"send" | "forward" | "schedule">("send");
   const [recipients, setRecipients] = useState<string[]>([]);
+  const [pendingSlot, setPendingSlot] = useState<{ start: string; end: string; label: string } | null>(
+    null
+  );
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
   const [historyStatus, setHistoryStatus] = useState<HistoryProfileStatus>("not_started");
   const [historyPhase, setHistoryPhase] = useState<HistorySyncPhase>("not_started");
@@ -633,6 +638,24 @@ export function App(): React.JSX.Element {
     setState("confirming");
   };
 
+  const onSchedule = () => {
+    if (!suggestion || confirmBusy) return;
+    const slot = suggestion.proposedSlots?.[0];
+    if (!slot) {
+      setErrorMessage("No proposed meeting times available to schedule.");
+      return;
+    }
+    setErrorMessage(null);
+    setStatusMessage(null);
+    setPendingSlot(slot);
+    setPendingAction("schedule");
+    // Preview only — server resolves attendees from the analyzed mail.
+    setRecipients(["mail participants"]);
+    setIdempotencyKey(newIdempotencyKey());
+    setConfirmOpen(true);
+    setState("confirming");
+  };
+
   const onReject = async () => {
     if (!suggestion) return;
     try {
@@ -653,13 +676,38 @@ export function App(): React.JSX.Element {
   };
 
   const onConfirm = async () => {
-    if (!suggestion) return;
+    if (!suggestion || confirmBusy) return;
     const session = await ensureSession();
     if (!session) return;
     const key = idempotencyKey || newIdempotencyKey();
     setIdempotencyKey(key);
     setConfirmBusy(true);
     try {
+      if (pendingAction === "schedule") {
+        const slot = pendingSlot || suggestion.proposedSlots?.[0];
+        if (!slot) {
+          setErrorMessage("No proposed meeting times available to schedule.");
+          return;
+        }
+        const result = await confirmSchedule({
+          token: session.token,
+          mailboxProfileId: session.profileId,
+          suggestionId: suggestion.suggestionId,
+          idempotencyKey: key,
+          slotStart: slot.start,
+          slotEnd: slot.end,
+        });
+        setConfirmOpen(false);
+        setPendingSlot(null);
+        setStatusMessage(
+          result.graph_event_id
+            ? `Meeting scheduled (${result.graph_event_id}).`
+            : "Meeting scheduled."
+        );
+        clearSuggestion();
+        setState("idle");
+        return;
+      }
       await submitFeedback({
         token: session.token,
         mailboxProfileId: session.profileId,
@@ -667,6 +715,10 @@ export function App(): React.JSX.Element {
         outcome: "accept",
         editedDraft: editDraft,
       });
+      if (pendingAction !== "send" && pendingAction !== "forward") {
+        setErrorMessage("Unsupported confirm action.");
+        return;
+      }
       await confirmOutbound({
         token: session.token,
         mailboxProfileId: session.profileId,
@@ -787,6 +839,12 @@ export function App(): React.JSX.Element {
 
       {state === "analyzing" ? <AnalyzingState /> : null}
 
+      {!needsSignIn && statusMessage ? (
+        <Text className={styles.meta} block role="status">
+          {statusMessage}
+        </Text>
+      ) : null}
+
       {!needsSignIn && (state === "error" || errorMessage) ? (
         <Text className={styles.warn} block>
           {errorMessage || "Something went wrong."}
@@ -804,6 +862,7 @@ export function App(): React.JSX.Element {
           onReject={() => void onReject()}
           onChangeRoute={() => setPickingRoute(true)}
           onGenerateResponse={() => void runAnalyze()}
+          onSchedule={() => void onSchedule()}
         />
       ) : null}
 
@@ -818,6 +877,7 @@ export function App(): React.JSX.Element {
           onReject={() => void onReject()}
           onChangeRoute={() => setPickingRoute(true)}
           onGenerateResponse={() => void runAnalyze()}
+          onSchedule={() => void onSchedule()}
         />
       ) : null}
 
@@ -908,11 +968,17 @@ export function App(): React.JSX.Element {
         <ConfirmOutboundDialog
           action={pendingAction}
           recipients={recipients}
-          draftExcerpt={editDraft || suggestion?.draft || ""}
+          draftExcerpt={
+            pendingAction === "schedule"
+              ? pendingSlot?.label ||
+                `${pendingSlot?.start || ""} – ${pendingSlot?.end || ""}`
+              : editDraft || suggestion?.draft || ""
+          }
           aiAssisted
           busy={confirmBusy}
           onCancel={() => {
             setConfirmOpen(false);
+            setPendingSlot(null);
             setState(suggestion?.confidence === "high" ? "ready_hero" : "ready_review");
           }}
           onConfirm={() => void onConfirm()}

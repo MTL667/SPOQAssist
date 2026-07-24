@@ -39,7 +39,7 @@ const useStyles = makeStyles({
 });
 
 export interface ConfirmOutboundDialogProps {
-  action: "send" | "forward";
+  action: "send" | "forward" | "schedule";
   recipients: string[];
   draftExcerpt: string;
   aiAssisted: boolean;
@@ -97,13 +97,26 @@ export function ConfirmOutboundDialog({
         aria-modal="true"
         aria-labelledby="confirm-outbound-title"
       >
-        <Title3 id="confirm-outbound-title">Confirm {action}</Title3>
-        <Text block>Recipients: {recipients.join(", ")}</Text>
-        <Text block>Excerpt: {draftExcerpt.slice(0, 180) || "(empty)"}</Text>
-        {aiAssisted ? (
+        <Title3 id="confirm-outbound-title">
+          {action === "schedule" ? "Confirm schedule" : `Confirm ${action}`}
+        </Title3>
+        <Text block>
+          {action === "schedule" ? "Attendees" : "Recipients"}:{" "}
+          {recipients.join(", ") || "(none)"}
+        </Text>
+        <Text block>
+          {action === "schedule" ? "Time" : "Excerpt"}:{" "}
+          {draftExcerpt.slice(0, 180) || "(empty)"}
+        </Text>
+        {aiAssisted && action !== "schedule" ? (
           <Text className={styles.disclosure} block>
             AI disclosure: this outbound message was prepared with SpoqSense assistance and will
             include a disclosure footer.
+          </Text>
+        ) : null}
+        {action === "schedule" ? (
+          <Text className={styles.disclosure} block>
+            This creates one Outlook calendar event. It does not send the email draft.
           </Text>
         ) : null}
         <div className={styles.actions}>

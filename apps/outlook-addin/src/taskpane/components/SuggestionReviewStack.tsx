@@ -27,6 +27,7 @@ export function SuggestionReviewStack({
   onReject,
   onChangeRoute,
   onGenerateResponse,
+  onSchedule,
 }: {
   suggestion: SuggestionViewModel;
   onAccept: () => void;
@@ -34,10 +35,13 @@ export function SuggestionReviewStack({
   onReject: () => void;
   onChangeRoute: () => void;
   onGenerateResponse: () => void;
+  onSchedule?: () => void;
 }): React.JSX.Element {
   const styles = useStyles();
   const hasDraft = Boolean(suggestion.draft);
   const canGenerate = !hasDraft && suggestion.historyStatus !== "none";
+  const showSchedule =
+    suggestion.category === "meeting" && (suggestion.proposedSlots?.length || 0) > 0;
   return (
     <section className={styles.stack} aria-label="Review suggestions">
       <Title3>Review suggestions</Title3>
@@ -57,6 +61,11 @@ export function SuggestionReviewStack({
           <Text weight="semibold">Suggested route</Text>
           <Text>{suggestion.suggestedRoute.email}</Text>
         </div>
+      ) : null}
+      {suggestion.availabilityNote ? (
+        <Text className={styles.meta} block>
+          {suggestion.availabilityNote}
+        </Text>
       ) : null}
       {hasDraft ? (
         <div className={styles.block}>
@@ -78,8 +87,10 @@ export function SuggestionReviewStack({
         onReject={onReject}
         onChangeRoute={onChangeRoute}
         onGenerateResponse={onGenerateResponse}
+        onSchedule={onSchedule}
         showChangeRoute={Boolean(suggestion.suggestedRoute)}
         showGenerateResponse={canGenerate}
+        showSchedule={showSchedule}
         hideAccept={!hasDraft && !suggestion.suggestedRoute}
       />
     </section>

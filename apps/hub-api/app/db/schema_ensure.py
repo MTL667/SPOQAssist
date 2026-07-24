@@ -23,6 +23,11 @@ _HISTORY_COLUMNS: dict[str, str] = {
     "history_messages_target": "INTEGER DEFAULT 0",
 }
 
+_SUGGESTION_COLUMNS: dict[str, str] = {
+    "proposed_slots_json": "TEXT DEFAULT '[]'",
+    "availability_note": "TEXT",
+}
+
 
 def ensure_mailbox_history_columns(engine: Engine) -> None:
     """Add history-profile columns to mailbox_profiles if missing (create_all won't ALTER)."""
@@ -46,6 +51,23 @@ def ensure_mailbox_history_columns(engine: Engine) -> None:
                 logger.info("schema_ensure_added column=%s", name)
     except Exception:
         logger.exception("schema_ensure_history_columns_failed")
+
+
+def ensure_suggestion_schedule_columns(engine: Engine) -> None:
+    """Add proposed_slots / availability_note on suggestions if missing."""
+    try:
+        insp = inspect(engine)
+        if "suggestions" not in insp.get_table_names():
+            return
+        existing = {col["name"] for col in insp.get_columns("suggestions")}
+        with engine.begin() as conn:
+            for name, sql_type in _SUGGESTION_COLUMNS.items():
+                if name in existing:
+                    continue
+                conn.execute(text(f"ALTER TABLE suggestions ADD COLUMN {name} {sql_type}"))
+                logger.info("schema_ensure_added column=%s", name)
+    except Exception:
+        logger.exception("schema_ensure_suggestion_schedule_columns_failed")
 
 
 def ensure_pgvector_column(engine: Engine) -> None:

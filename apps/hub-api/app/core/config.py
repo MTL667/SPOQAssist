@@ -81,7 +81,9 @@ class Settings(BaseSettings):
         default=(
             "https://graph.microsoft.com/Mail.Read,"
             "https://graph.microsoft.com/Mail.Read.Shared,"
-            "https://graph.microsoft.com/Mail.Send"
+            "https://graph.microsoft.com/Mail.Send,"
+            "https://graph.microsoft.com/Calendars.Read,"
+            "https://graph.microsoft.com/Calendars.ReadWrite"
         ),
         validation_alias="GRAPH_SCOPES",
     )

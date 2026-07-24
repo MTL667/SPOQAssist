@@ -62,9 +62,14 @@ def reset_engine() -> None:
 def init_db() -> None:
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
-    from app.db.schema_ensure import ensure_mailbox_history_columns, ensure_pgvector_column
+    from app.db.schema_ensure import (
+        ensure_mailbox_history_columns,
+        ensure_pgvector_column,
+        ensure_suggestion_schedule_columns,
+    )
 
     ensure_mailbox_history_columns(engine)
+    ensure_suggestion_schedule_columns(engine)
     ensure_pgvector_column(engine)
 
 

@@ -95,6 +95,12 @@ class AttachmentSummary(BaseModel):
     is_scan: bool = False
 
 
+class ProposedSlotOut(BaseModel):
+    start: str
+    end: str
+    label: str
+
+
 class SuggestionOut(BaseModel):
     suggestion_id: str
     mailbox_profile_id: str
@@ -111,6 +117,8 @@ class SuggestionOut(BaseModel):
     attachment_summaries: list[AttachmentSummary] = Field(default_factory=list)
     actions: list[str] = Field(default_factory=list)
     extracted_actions: list[ActionItem] = Field(default_factory=list)
+    proposed_slots: list[ProposedSlotOut] = Field(default_factory=list)
+    availability_note: str | None = None
     precompute_status: str | None = None
     timings: dict[str, int] = Field(default_factory=dict)
 
@@ -157,6 +165,20 @@ class ConfirmOutboundOut(BaseModel):
     graph_message_id: str | None = None
     idempotent_replay: bool = False
     ai_disclosure_applied: bool = False
+
+
+class ConfirmScheduleIn(BaseModel):
+    suggestion_id: str
+    slot_start: str
+    slot_end: str
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    attendees: list[str] | None = None
+
+
+class ConfirmScheduleOut(BaseModel):
+    status: str
+    graph_event_id: str | None = None
+    idempotent_replay: bool = False
 
 
 class IndexRequest(BaseModel):

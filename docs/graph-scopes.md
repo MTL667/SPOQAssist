@@ -9,6 +9,8 @@ Documented during Story 1.4. Configure the same scopes on each Entra app registr
 | `Mail.Read` | Read message content for analysis (personal) |
 | `Mail.Read.Shared` | Read shared-mailbox content for delegates |
 | `Mail.Send` | Send/forward only after confirm-outbound (FR37) — used in later stories |
+| `Calendars.Read` | Free/busy consult for meeting-intent drafts (owner calendar only) |
+| `Calendars.ReadWrite` | Create Outlook events after explicit Schedule confirm |
 
 Authority: `https://login.microsoftonline.com/{tenant_id}`  
 Resource: Microsoft Graph (`https://graph.microsoft.com`)

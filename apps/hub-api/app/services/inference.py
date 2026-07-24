@@ -89,6 +89,7 @@ class InferenceClient(Protocol):
         include_draft: bool,
         behavior_summary: str | None = None,
         classification: AnalyzeSignals | None = None,
+        availability_prompt: str | None = None,
     ) -> AnalyzeSignals: ...
 
     def summarize_mailbox_behavior(
@@ -158,6 +159,7 @@ class StubInferenceClient:
         include_draft: bool,
         behavior_summary: str | None = None,
         classification: AnalyzeSignals | None = None,
+        availability_prompt: str | None = None,
     ) -> AnalyzeSignals:
         del mailbox_email
         if classification is not None:
@@ -180,6 +182,11 @@ class StubInferenceClient:
                     lang=lang,
                     greet_name=greet,
                     latest_snippet=latest,
+                )
+                signals.draft = _apply_stub_availability(
+                    draft=signals.draft,
+                    category=signals.category,
+                    availability_prompt=availability_prompt,
                 )
             elif include_draft:
                 signals.draft = None
@@ -261,6 +268,11 @@ class StubInferenceClient:
                     greet_name=greet,
                     latest_snippet=latest,
                 )
+                draft = _apply_stub_availability(
+                    draft=draft,
+                    category=category,
+                    availability_prompt=availability_prompt,
+                )
                 if parts.split:
                     why.append(
                         {
@@ -310,6 +322,48 @@ class StubInferenceClient:
 
     def health(self) -> dict:
         return {"status": "ok", "mode": "stub", "embedding_dim": EMBEDDING_DIM}
+
+
+def _meeting_intent_block(availability_prompt: str | None) -> str:
+    if availability_prompt and availability_prompt.strip():
+        return (
+            "Intent: MEETING/CALL follow-up.\n"
+            f"{availability_prompt.strip()}\n"
+            "If an unavailability note is present, clearly state the owner is unavailable "
+            "in the requested window, then offer ONLY the listed free times. "
+            "Do NOT invent a confirmed calendar hold, Teams link, or booked slot."
+        )
+    return (
+        "Intent: MEETING/CALL follow-up. Propose next steps or ask for times. "
+        "Do NOT invent a confirmed calendar hold, Teams link, or booked slot."
+    )
+
+
+def _apply_stub_availability(
+    *,
+    draft: str | None,
+    category: str,
+    availability_prompt: str | None,
+) -> str | None:
+    if not draft or category != "meeting" or not (availability_prompt or "").strip():
+        return draft
+    prompt = availability_prompt or ""
+    # Prefer first proposed slot label for deterministic tests.
+    slot_match = re.search(
+        r"Proposed free slots:\s*\n\s*1\.\s+(.+?)\s+\(",
+        prompt,
+    )
+    unavail_match = re.search(r"Unavailability:\s*(.+)", prompt)
+    extras: list[str] = []
+    if unavail_match:
+        extras.append(unavail_match.group(1).strip())
+    if slot_match:
+        extras.append(f"Available time: {slot_match.group(1).strip()}")
+    elif "No free office-hour slots" in prompt:
+        extras.append("No free office-hour slots found.")
+    if not extras:
+        return draft
+    return draft.rstrip() + "\n\n" + "\n".join(extras)
 
 
 class OllamaInferenceClient:
@@ -376,6 +430,7 @@ class OllamaInferenceClient:
         include_draft: bool,
         behavior_summary: str | None = None,
         classification: AnalyzeSignals | None = None,
+        availability_prompt: str | None = None,
     ) -> AnalyzeSignals:
         # Fast path: heuristic + retrieved/learned context; draft via instruct when needed.
         # Never send mailbox content to external LLM APIs — only local Ollama.
@@ -400,6 +455,7 @@ class OllamaInferenceClient:
                 category=stub.category,
                 route_email=stub.route_email,
                 behavior_summary=behavior_summary,
+                availability_prompt=availability_prompt,
             )
             stub.draft = draft
             stub.draft_error = (
@@ -432,6 +488,7 @@ class OllamaInferenceClient:
         category: str,
         route_email: str | None,
         behavior_summary: str | None = None,
+        availability_prompt: str | None = None,
     ) -> str | None:
         owner = mailbox_email or "the mailbox owner"
         owner_name = _display_name_from_email(mailbox_email) or owner
@@ -451,10 +508,7 @@ class OllamaInferenceClient:
         lang = detect_reply_language(latest, behavior_summary)
         lang_name = _lang_code_to_name(lang)
         if category == "meeting":
-            intent_block = (
-                "Intent: MEETING/CALL follow-up. Propose next steps or ask for times. "
-                "Do NOT invent a confirmed calendar hold, Teams link, or booked slot."
-            )
+            intent_block = _meeting_intent_block(availability_prompt)
         elif category == "forward" and route_email:
             intent_block = (
                 f"Intent: FORWARD. Write a short reply acknowledging you will forward "
@@ -761,6 +815,7 @@ class VLLMInferenceClient:
         include_draft: bool,
         behavior_summary: str | None = None,
         classification: AnalyzeSignals | None = None,
+        availability_prompt: str | None = None,
     ) -> AnalyzeSignals:
         # Classify via 27B (fast); draft via 72B (on-demand). Skip classify when cached.
         if classification is not None:
@@ -808,6 +863,7 @@ class VLLMInferenceClient:
                 category=signals.category,
                 route_email=signals.route_email,
                 behavior_summary=behavior_summary,
+                availability_prompt=availability_prompt,
             )
             signals.draft = draft
             signals.draft_error = draft_error
@@ -1006,6 +1062,7 @@ class VLLMInferenceClient:
         category: str,
         route_email: str | None,
         behavior_summary: str | None = None,
+        availability_prompt: str | None = None,
     ) -> tuple[str | None, str | None]:
         """Return (draft, draft_error). Soft-fail never raises for analyze."""
         owner = mailbox_email or "the mailbox owner"
@@ -1025,10 +1082,7 @@ class VLLMInferenceClient:
         lang = detect_reply_language(latest, behavior_summary)
         lang_name = _lang_code_to_name(lang)
         if category == "meeting":
-            intent_block = (
-                "Intent: MEETING/CALL follow-up. Propose next steps or ask for times. "
-                "Do NOT invent a confirmed calendar hold, Teams link, or booked slot."
-            )
+            intent_block = _meeting_intent_block(availability_prompt)
         elif category == "forward" and route_email:
             intent_block = (
                 f"Intent: FORWARD. Write a short reply acknowledging you will forward "

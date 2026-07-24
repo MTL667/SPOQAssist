@@ -46,6 +46,12 @@ export function mapSuggestion(api: SuggestionOut): SuggestionViewModel {
         dismissed: a.dismissed ?? false,
       })
     ),
+    proposedSlots: (api.proposed_slots || []).map((s) => ({
+      start: s.start,
+      end: s.end,
+      label: s.label,
+    })),
+    availabilityNote: api.availability_note ?? null,
     precomputeStatus: api.precompute_status ?? null,
     timings: api.timings ?? {},
   };

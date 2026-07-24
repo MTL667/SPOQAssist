@@ -21,6 +21,8 @@ class LoadedMessage:
     sender: str
     attachment_names: list[str] = field(default_factory=list)
     attachment_sizes: list[int] = field(default_factory=list)
+    to_recipients: list[str] = field(default_factory=list)
+    cc_recipients: list[str] = field(default_factory=list)
 
 
 def load_message_for_analyze(
@@ -56,6 +58,8 @@ def load_message_for_analyze(
             sender=msg.sender,
             attachment_names=msg.attachment_names or attachment_names,
             attachment_sizes=list(msg.attachment_sizes or []),
+            to_recipients=list(msg.to_recipients or []),
+            cc_recipients=list(msg.cc_recipients or []),
         )
 
     # Stub mode — Office.js / test payload path

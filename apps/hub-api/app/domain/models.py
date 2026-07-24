@@ -123,6 +123,8 @@ class Suggestion(Base):
     why_json: Mapped[str] = mapped_column(Text, default="[]")
     history_status: Mapped[str] = mapped_column(String(32), default="none")
     attachment_warnings_json: Mapped[str] = mapped_column(Text, default="[]")
+    proposed_slots_json: Mapped[str] = mapped_column(Text, default="[]")
+    availability_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_oid: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

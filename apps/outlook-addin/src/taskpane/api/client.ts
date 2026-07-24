@@ -181,6 +181,40 @@ export async function confirmOutbound(params: {
   };
 }
 
+export async function confirmSchedule(params: {
+  token: string;
+  mailboxProfileId: string;
+  suggestionId: string;
+  idempotencyKey: string;
+  slotStart: string;
+  slotEnd: string;
+  attendees?: string[];
+}): Promise<{ status: string; graph_event_id: string | null; idempotent_replay: boolean }> {
+  const response = await fetch(
+    `${hubBaseUrl()}/v1/mailbox_profiles/${params.mailboxProfileId}/confirm-schedule`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${params.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        suggestion_id: params.suggestionId,
+        idempotency_key: params.idempotencyKey,
+        slot_start: params.slotStart,
+        slot_end: params.slotEnd,
+        attendees: params.attendees,
+      }),
+    }
+  );
+  if (!response.ok) throw new Error(await parseError(response));
+  return (await response.json()) as {
+    status: string;
+    graph_event_id: string | null;
+    idempotent_replay: boolean;
+  };
+}
+
 export function getHubBaseUrl(): string {
   return hubBaseUrl();
 }
